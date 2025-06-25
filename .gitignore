@@ -1,0 +1,86 @@
+# ===========================
+# Python (Backend)
+# ===========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+backend/venv/
+backend/.env
+backend/.env.example
+.flaskenv
+backend/faiss_env/
+faiss_env/
+data/
+backend/models/*.gguf
+backend/models/*.bin
+backend/models/*.safetensors
+backend/models/*.pt
+backend/faiss_env/
+backend/app/__pycache__/
+backend/__pycache__/
+backend/tests/__pycache__/
+*.log
+*.db
+*.tmp
+
+# Editor/IDE
+.idea/
+.vscode/
+*.iml
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# ===========================
+# Frontend (Node.js, React, Vue)
+# ===========================
+
+# Dependencies
+frontend/node_modules/
+frontend/.pnp/
+frontend/.pnp.js
+
+# Production build
+frontend/dist/
+frontend/build/
+
+# Log files
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+
+# Environment variables
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# Next.js specific
+frontend/.next/
+frontend/out/
+
+# Nuxt.js specific
+frontend/.nuxt/
+frontend/.output/
+
+# Vue.js specific
+frontend/.vite/
+frontend/.cache/
+
+# Misc
+frontend/.DS_Store
+frontend/.eslintcache
+frontend/.parcel-cache
+frontend/coverage/
+frontend/.turbo/
+
+# Editor
+frontend/.idea/
+frontend/.vscode/

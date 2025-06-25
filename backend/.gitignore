@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+
+# Environment variables
+.env
+.flaskenv
+
+# Data and Models (potentially large and user-specific)
+data/
+backend/models/*.gguf
+backend/models/*.bin
+backend/models/*.safetensors # For some transformer models
+backend/models/*.pt # For some PyTorch models
+
+faiss_env/
+# Logs
+*.log
+
+# Editor/IDE specific files
+.idea/  # For PyCharm
+.vscode/ # For VS Code
+*.iml   # Intellij IDEA project files
+
+# Operating System Files
+.DS_Store # macOS
+Thumbs.db # Windows
+
+# Temporary files
+*.tmp
