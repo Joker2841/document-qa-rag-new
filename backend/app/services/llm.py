@@ -692,7 +692,7 @@ class LLMService:
         
         try:
             # Assuming _build_context, _create_enhanced_rag_prompt, _format_sources are defined correctly below
-            context_text = self._build_context(context_chunks, max_length=3500) # Increased max_length slightly
+            context_text = self._build_context(context_chunks, max_length=3000) # Increased max_length slightly
             prompt = self._create_enhanced_rag_prompt(context_text, question)
             
             # ***** MODIFIED CALL *****
@@ -795,21 +795,21 @@ class LLMService:
         return "\n\n".join(context_parts)
     
     def _create_enhanced_rag_prompt(self, context: str, question: str) -> str:
-        """Create an enhanced RAG prompt optimized for QA."""
-        return f"""Based on the following context information, please provide a comprehensive and accurate answer to the question. If the context doesn't contain sufficient information to answer the question completely, please state what you can determine from the context and clearly indicate what information is missing.
+        """Create an enhanced RAG prompt that prevents hallucination."""
+        return f"""You are an AI assistant helping with a Document Q&A system. Answer ONLY based on the provided context.
 
-CONTEXT:
+DOCUMENTS:
 {context}
 
 QUESTION: {question}
 
 INSTRUCTIONS:
-- Provide a clear, direct answer based only on the information in the context
-- If you cannot find the answer in the context, say "I don't have enough information in the provided context to answer this question"
-- Be specific and cite relevant details from the context when possible (e.g., [Source X: Document Name])
-- Keep your answer focused and concise
+- Answer based on the information in the documents
+- Be specific and mention which document your information comes from
+- If something is unclear, provide the best answer you can based on what's available
+- Only say "I don't have this information" if the documents truly don't contain anything relevant
 
-ANSWER:"""
+ANSWER (based only on the context above):"""
     
     def _format_sources(self, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Format source information with enhanced details."""

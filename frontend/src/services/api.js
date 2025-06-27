@@ -3,8 +3,8 @@ import toast from 'react-hot-toast';
 
 // Create axios instance with base configuration
 const api = axios.create({
-  baseURL: '/api/v1',
-  timeout: 90000, // 30 seconds for document processing
+  baseURL: import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api/v1` : '/api/v1',
+  timeout: 90000, // 90 seconds for document processing
   headers: {
     'Content-Type': 'application/json',
   },
@@ -112,6 +112,16 @@ export const documentAPI = {
     const response = await api.get(`/documents/${documentId}/content`);
     return response.data;
   },
+
+  // Search documents using the better RAG service endpoint
+  searchDocuments: async (query, options = {}) => {
+    const response = await api.post('/documents/search', {
+      query,
+      top_k: options.limit || options.top_k || 5,
+      score_threshold: options.threshold || options.score_threshold || 0.3
+    });
+    return response.data;
+  },
 };
 
 // Query API functions
@@ -121,22 +131,24 @@ export const queryAPI = {
     const response = await api.post('/query/ask', {
       question,
       document_ids: documentIds,
-      max_sources: options.maxSources || 3,
+      top_k: options.top_k || 5,
+      score_threshold: options.score_threshold || 0.3,
+      max_tokens: options.max_tokens || 512,
       temperature: options.temperature || 0.7,
     });
 
     return response.data;
   },
 
-  // Search documents
+  // Search documents - NOW USES THE BETTER ENDPOINT
   searchDocuments: async (query, documentIds = [], limit = 10) => {
-    const response = await api.post('/query/search', {
-      query,
-      document_ids: documentIds,
+    // Use the better-performing documents/search endpoint
+    return documentAPI.searchDocuments(query, {
       limit,
+      document_ids: documentIds,
+      top_k: limit,
+      score_threshold: 0.3
     });
-
-    return response.data;
   },
 
   // Get query history
@@ -207,26 +219,46 @@ export const analyticsAPI = {
       return {
         success: false,
         llm_usage: {},
-        top_llm_used: null,
+        top_llm: null,
         top_llm_count: 0
       };
     }
   }
 };
 
+// Search API - Unified interface using the better endpoint
+export const searchAPI = {
+  // Main search function using the excellent RAG service
+  search: async (query, options = {}) => {
+    return documentAPI.searchDocuments(query, options);
+  },
+  
+  // Semantic search with more options
+  semanticSearch: async (query, options = {}) => {
+    const response = await api.post('/documents/search', {
+      query,
+      top_k: options.topK || 5,
+      score_threshold: options.scoreThreshold || 0.3,
+      // Add any additional options your RAG service supports
+    });
+    return response.data;
+  },
+};
+
 // Utility functions
 export const utils = {
   // Format file size
   formatFileSize: (bytes) => {
-    if (bytes === 0) return '0 Bytes';
+    if (!bytes || bytes === 0) return '0 Bytes';
     const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   },
 
   // Format date
   formatDate: (dateString) => {
+    if (!dateString) return '—';
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
@@ -247,14 +279,20 @@ export const utils = {
       'text/plain',
       'text/html',
       'text/markdown',
+      'text/x-markdown',
+      'application/x-pdf',
     ];
+    
+    const allowedExtensions = ['.pdf', '.docx', '.doc', '.txt', '.html', '.md'];
+    const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
 
     if (file.size > maxSize) {
       throw new Error(`File "${file.name}" is too large. Maximum size is 50MB.`);
     }
 
-    if (!allowedTypes.includes(file.type)) {
-      throw new Error(`File "${file.name}" has unsupported format.`);
+    // Check by extension if MIME type check fails
+    if (!allowedTypes.includes(file.type) && !allowedExtensions.includes(fileExtension)) {
+      throw new Error(`File "${file.name}" has unsupported format. Supported: PDF, Word, Text, HTML, Markdown`);
     }
 
     return true;
@@ -273,11 +311,37 @@ export const utils = {
     };
   },
 
-  // Highlight text
+  // Highlight text with HTML safe escaping
   highlightText: (text, query) => {
-    if (!query) return text;
-    const regex = new RegExp(`(${query})`, 'gi');
+    if (!query || !text) return text;
+    
+    // Escape special regex characters in query
+    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(${escapedQuery})`, 'gi');
+    
     return text.replace(regex, '<mark class="bg-yellow-200 px-1 rounded">$1</mark>');
+  },
+
+  // Extract text snippet around match
+  extractSnippet: (text, query, maxLength = 200) => {
+    if (!query || !text) return text.substring(0, maxLength) + '...';
+    
+    const lowerText = text.toLowerCase();
+    const lowerQuery = query.toLowerCase();
+    const index = lowerText.indexOf(lowerQuery);
+    
+    if (index === -1) {
+      return text.substring(0, maxLength) + '...';
+    }
+    
+    const start = Math.max(0, index - 50);
+    const end = Math.min(text.length, index + query.length + 150);
+    
+    let snippet = text.substring(start, end);
+    if (start > 0) snippet = '...' + snippet;
+    if (end < text.length) snippet = snippet + '...';
+    
+    return snippet;
   },
 };
 

@@ -10,7 +10,8 @@ from app.services.document_processor import DocumentProcessor
 from app.utils.file_utils import get_file_path, save_uploaded_file
 from app.database import get_db
 from datetime import datetime
-
+from fastapi.responses import FileResponse, Response
+import mimetypes
 
 rag_service = RAGService()
 router = APIRouter(
@@ -263,4 +264,136 @@ async def get_document_content(document_id: str, db: Session = Depends(get_db)):
             status_code=500, 
             detail=f"Error reading document content: {str(e)}"
         )
+    
+@router.get("/{document_id}/preview")
+async def preview_document(
+    document_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Preview a document in the browser.
+    """
+    document = db.query(DocumentDB).filter(DocumentDB.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    file_path = Path(document.file_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on server")
+    
+    # Determine content type
+    content_type, _ = mimetypes.guess_type(str(file_path))
+    if not content_type:
+        content_type = "application/octet-stream"
+    
+    # For PDFs and images, browsers can display them inline
+    if content_type in ["application/pdf", "image/jpeg", "image/png", "image/gif"]:
+        return FileResponse(
+            path=str(file_path),
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"inline; filename={document.filename}"
+            }
+        )
+    else:
+        # For other files, return the content as text if possible
+        try:
+            if document.processed_path and Path(document.processed_path).exists():
+                # Return processed text content
+                with open(document.processed_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                return Response(
+                    content=content,
+                    media_type="text/plain",
+                    headers={
+                        "Content-Disposition": f"inline; filename={document.filename}.txt"
+                    }
+                )
+            else:
+                # Try to read original file as text
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                return Response(
+                    content=content,
+                    media_type="text/plain"
+                )
+        except:
+            # If can't read as text, force download
+            return FileResponse(
+                path=str(file_path),
+                media_type=content_type,
+                filename=document.filename
+            )
+
+@router.get("/{document_id}/download")
+async def download_document(
+    document_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Download a document.
+    """
+    document = db.query(DocumentDB).filter(DocumentDB.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    file_path = Path(document.file_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on server")
+    
+    # Force download with attachment disposition
+    return FileResponse(
+        path=str(file_path),
+        media_type="application/octet-stream",
+        filename=document.filename,
+        headers={
+            "Content-Disposition": f"attachment; filename={document.filename}"
+        }
+    )
+
+@router.get("/{document_id}/content")
+async def get_document_content(
+    document_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get the extracted text content of a document.
+    """
+    document = db.query(DocumentDB).filter(DocumentDB.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Try to get processed content first
+    if document.processed_path and Path(document.processed_path).exists():
+        try:
+            with open(document.processed_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            return {
+                "success": True,
+                "document_id": document_id,
+                "filename": document.filename,
+                "content": content,
+                "char_count": len(content)
+            }
+        except Exception as e:
+            logger.error(f"Error reading processed content: {e}")
+    
+    # If no processed content, try to extract on the fly
+    try:
+        from app.services.document_processor import DocumentProcessor
+        text, char_count = DocumentProcessor.process_document(document.file_path)
+        return {
+            "success": True,
+            "document_id": document_id,
+            "filename": document.filename,
+            "content": text,
+            "char_count": char_count
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Could not extract content: {str(e)}",
+            "document_id": document_id,
+            "filename": document.filename
+        }
 

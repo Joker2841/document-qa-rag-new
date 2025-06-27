@@ -62,13 +62,111 @@ const DocumentList = () => {
   const [stats, setStats] = useState({ totalSize: 0, processingCount: 0, readyCount: 0 });
 
   // Calculate document statistics
-  useEffect(() => {
-    const totalSize = documents.reduce((sum, doc) => sum + (doc.size || 0), 0);
-    const processingCount = documents.filter(doc => doc.status === 'processing').length;
-    const readyCount = documents.filter(doc => doc.status === 'ready' || !doc.status).length;
+useEffect(() => {
+  const totalSize = documents.reduce((sum, doc) => {
+    // Handle different possible size field names
+    const size = doc.size || doc.file_size || doc.char_count || 0;
+    return sum + size;
+  }, 0);
+  
+  const processingCount = documents.filter(doc => 
+    doc.status === 'processing'
+  ).length;
+  
+  const readyCount = documents.filter(doc => 
+    doc.status === 'ready' || 
+    doc.status === 'completed' || 
+    (!doc.status || doc.status === '') // If no status field, assume ready
+  ).length;
+  
+  setStats({ totalSize, processingCount, readyCount });
+}, [documents]);
+
+  
+const handlePreview = async (doc) => {
+  try {
+    // Option 1: Open in new tab (simplest approach)
+    const fileUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/documents/${doc.id}/preview`;
+    window.open(fileUrl, '_blank');
     
-    setStats({ totalSize, processingCount, readyCount });
-  }, [documents]);
+    // Option 2: Fetch and display inline (for advanced preview)
+    // const response = await fetch(fileUrl);
+    // const blob = await response.blob();
+    // const objectUrl = URL.createObjectURL(blob);
+    // window.open(objectUrl, '_blank');
+    // URL.revokeObjectURL(objectUrl); // Clean up
+    
+    toast.success('Opening document preview...');
+  } catch (error) {
+    console.error('Preview error:', error);
+    toast.error('Failed to preview document');
+  }
+};
+
+const handleDownload = async (doc) => {
+  try {
+    const fileUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/documents/${doc.id}/download`;
+    
+    // Create a temporary anchor element for download
+    const link = document.createElement('a');
+    link.href = fileUrl;
+    link.download = doc.filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    toast.success(`Downloading ${doc.filename}...`);
+  } catch (error) {
+    console.error('Download error:', error);
+    toast.error('Failed to download document');
+  }
+};
+
+const handleShareSelected = async () => {
+  if (selectedDocuments.length === 0) {
+    toast.error('No documents selected');
+    return;
+  }
+
+  try {
+    // Create shareable content
+    const selectedDocs = documents.filter(doc => selectedDocuments.includes(doc.id));
+    const shareableText = selectedDocs
+      .map(doc => `${doc.filename} (${formatFileSize(doc.size || doc.char_count || 0)})`)
+      .join('\n');
+
+    // Check if Web Share API is available
+    if (navigator.share) {
+      await navigator.share({
+        title: 'Shared Documents',
+        text: `Sharing ${selectedDocuments.length} documents:\n\n${shareableText}`,
+      });
+      toast.success('Documents shared successfully!');
+    } else {
+      // Fallback: Copy to clipboard
+      await navigator.clipboard.writeText(shareableText);
+      toast.success('Document list copied to clipboard!', {
+        description: 'You can now paste and share the document information',
+        duration: 4000,
+      });
+    }
+  } catch (error) {
+    if (error.name !== 'AbortError') {
+      console.error('Share error:', error);
+      toast.error('Failed to share documents');
+    }
+  }
+};
+
+const formatFileSize = (bytes) => {
+  if (!bytes || bytes === 0) return '0 Bytes';
+  
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
 
   // Enhanced filtering and sorting
   const filteredAndSortedDocuments = useMemo(() => {
@@ -77,51 +175,41 @@ const DocumentList = () => {
       const searchLower = searchTerm.toLowerCase();
       const matchesSearch = !searchTerm || 
         doc.filename.toLowerCase().includes(searchLower) ||
-        (doc.content && doc.content.toLowerCase().includes(searchLower)) ||
-        (doc.tags && doc.tags.some(tag => tag.toLowerCase().includes(searchLower)));
+        (doc.content && doc.content.toLowerCase().includes(searchLower));
       
       // Type filter
       const matchesType = filterType === 'all' || 
-                         doc.file_type === filterType ||
-                         doc.type === filterType ||
-                         (filterType === 'selected' && selectedDocuments.includes(doc.id)) ||
-                         (filterType === 'processing' && doc.status === 'processing') ||
-                         (filterType === 'ready' && (doc.status === 'ready' || !doc.status)) ||
-                         (filterType === 'starred' && doc.starred);
+                        doc.file_type === filterType ||
+                        doc.type === filterType ||
+                        (filterType === 'selected' && selectedDocuments.includes(doc.id));
       
       // Date range filter
       const matchesDateRange = !dateRange.start || !dateRange.end || 
         (new Date(doc.created_at || doc.uploadedAt) >= new Date(dateRange.start) &&
-         new Date(doc.created_at || doc.uploadedAt) <= new Date(dateRange.end));
+        new Date(doc.created_at || doc.uploadedAt) <= new Date(dateRange.end));
       
-      // Tags filter
-      const matchesTags = selectedTags.length === 0 || 
-        (doc.tags && selectedTags.every(tag => doc.tags.includes(tag)));
-      
-      return matchesSearch && matchesType && matchesDateRange && matchesTags;
+      return matchesSearch && matchesType && matchesDateRange;
     });
 
-    // Enhanced sorting
+    // Sorting (remove status case)
     filtered.sort((a, b) => {
       switch (sortBy) {
         case 'name':
           return a.filename.localeCompare(b.filename);
         case 'size':
-          return (b.size || 0) - (a.size || 0);
+          return (b.size || b.char_count || 0) - (a.size || a.char_count || 0);
         case 'type':
-          return (a.type || '').localeCompare(b.type || '');
-        case 'status':
-          return (a.status || 'ready').localeCompare(b.status || 'ready');
+          return (a.type || a.file_type || '').localeCompare(b.type || b.file_type || '');
         case 'chunks':
           return (b.chunk_count || 0) - (a.chunk_count || 0);
         case 'date':
         default:
-          return new Date(b.created_at || b.uploadedAt) - new Date(a.created_at || a.uploadedAt);
+          return new Date(b.created_at || b.uploadedAt || 0) - new Date(a.created_at || a.uploadedAt || 0);
       }
     });
 
     return filtered;
-  }, [documents, searchTerm, sortBy, filterType, selectedDocuments, dateRange, selectedTags]);
+  }, [documents, searchTerm, sortBy, filterType, selectedDocuments, dateRange]);
 
   // Get all available tags from documents
   const availableTags = useMemo(() => {
@@ -262,13 +350,13 @@ const DocumentList = () => {
         colorClass = hasError ? 'text-gray-300' : isProcessing ? 'text-gray-400' : 'text-gray-500';
         break;
       case 'html':
-        IconComponent = FileText;
-        colorClass = hasError ? 'text-orange-300' : isProcessing ? 'text-orange-400' : 'text-orange-500';
-        break;
+          IconComponent = FileText;
+          colorClass = hasError ? 'text-orange-300' : isProcessing ? 'text-orange-400' : 'text-orange-500';
+          break;
       case 'md':
-        IconComponent = FileText;
-        colorClass = hasError ? 'text-purple-300' : isProcessing ? 'text-purple-400' : 'text-purple-500';
-        break;
+          IconComponent = FileText;
+          colorClass = hasError ? 'text-purple-300' : isProcessing ? 'text-purple-400' : 'text-purple-500';
+          break;
     }
 
     return (
@@ -373,24 +461,20 @@ const DocumentList = () => {
             <Folder className="w-8 h-8 text-primary-500" />
             Document Library
           </h1>
-          <div className="flex flex-wrap items-center gap-6 text-sm text-gray-600">
-            <div className="flex items-center gap-2">
-              <File className="w-4 h-4" />
-              <span>{documents.length} document{documents.length !== 1 ? 's' : ''}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <CheckCircle className="w-4 h-4" />
-              <span>{selectedDocuments.length} selected</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Activity className="w-4 h-4" />
-              <span>{stats.readyCount} ready, {stats.processingCount} processing</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <TrendingUp className="w-4 h-4" />
-              <span>{utils.formatFileSize(stats.totalSize)} total</span>
-            </div>
+        <div className="flex flex-wrap items-center gap-6 text-sm text-gray-600">
+          <div className="flex items-center gap-2">
+            <File className="w-4 h-4" />
+            <span>{documents.length} document{documents.length !== 1 ? 's' : ''}</span>
           </div>
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-4 h-4" />
+            <span>{selectedDocuments.length} selected</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <TrendingUp className="w-4 h-4" />
+            <span>{formatFileSize(stats.totalSize)} total</span>
+          </div>
+        </div>
         </div>
         
         <div className="flex items-center gap-3">
@@ -453,7 +537,6 @@ const DocumentList = () => {
                 <option value="name">Sort by Name</option>
                 <option value="size">Sort by Size</option>
                 <option value="type">Sort by Type</option>
-                <option value="status">Sort by Status</option>
                 <option value="chunks">Sort by Chunks</option>
               </select>
 
@@ -464,9 +547,6 @@ const DocumentList = () => {
               >
                 <option value="all">All Files</option>
                 <option value="selected">Selected</option>
-                <option value="ready">Ready</option>
-                <option value="processing">Processing</option>
-                <option value="starred">Starred</option>
                 <option value="pdf">PDF</option>
                 <option value="docx">Word</option>
                 <option value="txt">Text</option>
@@ -590,19 +670,17 @@ const DocumentList = () => {
                   </span>
                 )}
               </div>
-
-              {selectedDocuments.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <button className="flex items-center gap-2 px-3 py-2 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors">
-                    <Share2 className="w-4 h-4" />
-                    Share Selected
-                  </button>
-                  <button className="flex items-center gap-2 px-3 py-2 text-sm bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors">
-                    <Archive className="w-4 h-4" />
-                    Archive Selected
-                  </button>
-                </div>
-              )}
+                {selectedDocuments.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={handleShareSelected}
+                      className="flex items-center gap-2 px-3 py-2 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"
+                    >
+                      <Share2 className="w-4 h-4" />
+                      Share Selected
+                    </button>
+                  </div>
+                )}
             </div>
           )}
         </div>
@@ -642,7 +720,7 @@ const DocumentList = () => {
                         {doc.filename}
                       </h3>
                       <p className="text-xs text-gray-500 mt-1">
-                        {doc.size && utils.formatFileSize(doc.size)}
+                        {formatFileSize(doc.size || doc.char_count || 0)}
                       </p>
                     </div>
                   </div>
@@ -663,7 +741,7 @@ const DocumentList = () => {
                       {(doc.type || doc.file_type || 'Unknown').toUpperCase()}
                     </span>
                     
-                    {doc.status && (
+                    {/*doc.status && (
                       <div className="flex items-center gap-1">
                         {doc.status === 'processing' && (
                           <div className="flex items-center gap-1 text-yellow-600">
@@ -684,7 +762,7 @@ const DocumentList = () => {
                           </div>
                         )}
                       </div>
-                    )}
+                    )*/}
                   </div>
                   
                   {doc.created_at && (
@@ -723,7 +801,7 @@ const DocumentList = () => {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        toast.info('Document preview coming soon!');
+                        handlePreview(doc);
                       }}
                       className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all duration-200"
                       title="Preview document"
@@ -734,18 +812,7 @@ const DocumentList = () => {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        copyDocumentInfo(doc);
-                      }}
-                      className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-all duration-200"
-                      title="Copy document info"
-                    >
-                      <Copy className="w-4 h-4" />
-                    </button>
-                    
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toast.info('Download feature coming soon!');
+                        handleDownload(doc);
                       }}
                       className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all duration-200"
                       title="Download document"
@@ -768,21 +835,7 @@ const DocumentList = () => {
                   </button>
                 </div>
 
-                {/* Processing Progress */}
-                {doc.status === 'processing' && (
-                  <div className="mt-4 pt-4 border-t border-gray-100">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Activity className="w-4 h-4 text-blue-500 animate-pulse" />
-                      <span className="text-sm font-medium text-blue-600">Processing Document</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div 
-                        className="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full animate-pulse"
-                        style={{ width: '60%' }}
-                      ></div>
-                    </div>
-                  </div>
-                )}
+                {}
               </motion.div>
             ))}
           </AnimatePresence>
@@ -801,9 +854,6 @@ const DocumentList = () => {
                     Size
                   </th>
                   <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Chunks
                   </th>
                   <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -815,119 +865,84 @@ const DocumentList = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-              <AnimatePresence>
-  {filteredAndSortedDocuments.map((doc, index) => (
-    <motion.div
-      key={doc.id}
-      initial={{ opacity: 0, x: -20 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: 20 }}
-      transition={{ delay: index * 0.02 }}
-      onClick={() => toggleDocumentSelection(doc.id)}
-      className={`flex items-center px-6 py-4 border-b cursor-pointer transition-colors hover:bg-gray-50 ${
-        selectedDocuments.includes(doc.id) ? 'bg-primary-50' : ''
-      }`}
-    >
-      {/* Selection + Filename + Type */}
-      <div className="flex items-center gap-4 flex-1 min-w-0">
-        {selectedDocuments.includes(doc.id) ? (
-          <CheckCircle className="w-5 h-5 text-primary-500 flex-shrink-0" />
-        ) : (
-          <Circle className="w-5 h-5 text-gray-400 flex-shrink-0" />
-        )}
-        {getFileIcon(doc, 'w-8 h-8')}
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">{doc.filename}</p>
-          <p className="text-sm text-gray-500">{(doc.type || doc.file_type || 'Unknown').toUpperCase()}</p>
-        </div>
-      </div>
+                {filteredAndSortedDocuments.map((doc, index) => (
+                  <tr
+                    key={doc.id}
+                    onClick={() => toggleDocumentSelection(doc.id)}
+                    className={`cursor-pointer transition-colors hover:bg-gray-50 ${
+                      selectedDocuments.includes(doc.id) ? 'bg-primary-50' : ''
+                    }`}
+                  >
+                    {/* Document */}
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-4">
+                        {selectedDocuments.includes(doc.id) ? (
+                          <CheckCircle className="w-5 h-5 text-primary-500 flex-shrink-0" />
+                        ) : (
+                          <Circle className="w-5 h-5 text-gray-400 flex-shrink-0" />
+                        )}
+                        {getFileIcon(doc, 'w-8 h-8')}
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">{doc.filename}</p>
+                          <p className="text-sm text-gray-500">{(doc.type || doc.file_type || 'Unknown').toUpperCase()}</p>
+                        </div>
+                      </div>
+                    </td>
 
-      {/* Size */}
-      <div className="w-28 text-sm text-gray-500 text-right">
-        {doc.size ? utils.formatFileSize(doc.size) : '—'}
-      </div>
+                    {/* Size */}
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      {doc.size || doc.char_count ? formatFileSize(doc.size || doc.char_count) : '—'}
+                    </td>
 
-      {/* Status */}
-      <div className="w-32 flex items-center justify-end text-sm">
-        {doc.status === 'processing' && (
-          <div className="flex items-center gap-2 text-yellow-600">
-            <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
-            <span>Processing</span>
-          </div>
-        )}
-        {doc.status === 'ready' && (
-          <div className="flex items-center gap-2 text-green-600">
-            <FileCheck className="w-4 h-4" />
-            <span>Ready</span>
-          </div>
-        )}
-        {doc.status === 'error' && (
-          <div className="flex items-center gap-2 text-red-600">
-            <AlertCircle className="w-4 h-4" />
-            <span>Error</span>
-          </div>
-        )}
-        {!doc.status && <span className="text-gray-500">Ready</span>}
-      </div>
+                    {/* Chunks */}
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      {doc.chunk_count || '—'}
+                    </td>
 
-      {/* Chunk Count */}
-      <div className="w-24 text-sm text-gray-500 text-right">
-        {doc.chunk_count || '—'}
-      </div>
+                    {/* Date */}
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      {doc.created_at ? utils.formatDate(doc.created_at) : '—'}
+                    </td>
 
-      {/* Created At */}
-      <div className="w-40 text-sm text-gray-500 text-right">
-        {doc.created_at ? utils.formatDate(doc.created_at) : '—'}
-      </div>
-
-      {/* Actions */}
-      <div className="w-48 flex items-center justify-end gap-2">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            toast.info('Document preview coming soon!');
-          }}
-          className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all duration-200"
-          title="Preview"
-        >
-          <Eye className="w-4 h-4" />
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            copyDocumentInfo(doc);
-          }}
-          className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-all duration-200"
-          title="Copy Info"
-        >
-          <Copy className="w-4 h-4" />
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            toast.info('Download feature coming soon!');
-          }}
-          className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all duration-200"
-          title="Download"
-        >
-          <Download className="w-4 h-4" />
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            if (window.confirm(`Are you sure you want to delete "${doc.filename}"?`)) {
-              handleDelete(doc);
-            }
-          }}
-          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all duration-200"
-          title="Delete"
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
-      </div>
-    </motion.div>
-  ))}
-</AnimatePresence>
+                    {/* Actions */}
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePreview(doc);
+                          }}
+                          className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all duration-200"
+                          title="Preview"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownload(doc);
+                          }}
+                          className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all duration-200"
+                          title="Download"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (window.confirm(`Are you sure you want to delete "${doc.filename}"?`)) {
+                              handleDelete(doc);
+                            }
+                          }}
+                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all duration-200"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
 
               </tbody>
             </table>

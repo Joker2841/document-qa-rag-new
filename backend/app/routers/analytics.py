@@ -222,41 +222,28 @@ async def get_query_trends(
 
 
 @router.get("/llm-usage")
-async def get_llm_usage_stats(db: Session = Depends(get_db)): # <- Completed this line
-    """
-    Get statistics on LLM usage.
-
-    Returns:
-    - A dictionary where keys are LLM names and values are their usage counts.
-    - Top LLM used and its count.
-    """
+async def get_llm_usage_stats(db: Session = Depends(get_db)):
+    """Get statistics on LLM usage."""
     try:
-        llm_counts_raw = db.query(
+        llm_stats = db.query(
             QueryHistoryDB.llm_used,
-            func.count(QueryHistoryDB.llm_used)
+            func.count(QueryHistoryDB.id).label('usage_count')
         ).filter(
             QueryHistoryDB.llm_used.isnot(None)
         ).group_by(
             QueryHistoryDB.llm_used
+        ).order_by(
+            desc('usage_count')
         ).all()
 
-        llm_usage_dict = {llm_name: count for llm_name, count in llm_counts_raw}
-
-        # Determine the top LLM used
-        if llm_usage_dict:
-            top_llm_name = max(llm_usage_dict, key=llm_usage_dict.get)
-            top_llm_count = llm_usage_dict[top_llm_name]
-        else:
-            top_llm_name = None
-            top_llm_count = 0
-
+        usage_dict = {stat.llm_used: stat.usage_count for stat in llm_stats}
+        
         return {
             "success": True,
-            "llm_usage": llm_usage_dict,
-            "top_llm_used": top_llm_name,
-            "top_llm_count": top_llm_count
+            "llm_usage": usage_dict,
+            "top_llm": llm_stats[0].llm_used if llm_stats else None,
+            "top_llm_count": llm_stats[0].usage_count if llm_stats else 0
         }
-
     except Exception as e:
         logger.error(f"Error getting LLM usage stats: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting LLM usage stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

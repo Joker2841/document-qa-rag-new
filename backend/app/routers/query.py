@@ -130,124 +130,113 @@ def update_document_count(db: Session):
 
 
 @router.post("/ask", response_model=QueryResponse)
-async def ask_question(request: QueryRequest, db: Session = Depends(get_db)):
+async def ask_question(
+    request: QueryRequest,
+    db: Session = Depends(get_db)
+):
     """
-    Ask a question and get an AI-generated answer based on uploaded documents.
-    
-    This endpoint:
-    1. Retrieves relevant document chunks using vector similarity search
-    2. Uses an LLM to generate a contextual answer
-    3. Returns the answer with source citations
-    4. Saves the query to history for analytics
+    Ask a question and get an AI-generated answer with proper sources.
     """
     start_time = time.time()
+    logger.info(f"🤔 Processing question: '{request.question[:50]}...'")
     
     try:
-        logger.info(f"🤔 Processing question: '{request.question[:100]}...'")
-        
-        # Step 1: Search for relevant context
-        search_result = await asyncio.get_event_loop().run_in_executor(
-            executor,
-            rag_service.search_documents,
-            request.question,
-            request.top_k,
-            request.score_threshold
+        # Step 1: Use RAG service for search (your excellent search)
+        search_results = rag_service.search_documents(
+            query=request.question,
+            top_k=request.top_k,
+            score_threshold=request.score_threshold
         )
         
-        if not search_result['success']:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Search failed: {search_result.get('error', 'Unknown error')}"
-            )
-        
-        context_chunks = search_result['results']
-        
-        if not context_chunks:
-            response = QueryResponse(
-                success=True,
-                answer="I couldn't find any relevant information in the uploaded documents to answer your question. Please try rephrasing your question or upload more relevant documents.",
+        if not search_results.get('success') or not search_results.get('results'):
+            logger.warning("No relevant documents found")
+            return QueryResponse(
+                success=False,
+                answer="I couldn't find any relevant information in the documents to answer your question.",
                 sources=[],
-                llm_used="none",
                 response_time=time.time() - start_time,
-                context_chunks_count=0
+                context_chunks_count=0,
+                error="No relevant documents found"
             )
+        
+        # Step 2: Get document information for proper source attribution
+        chunks = search_results['results'][:request.top_k]
+        
+        # Enhance chunks with document information
+        enhanced_chunks = []
+        for chunk in chunks:
+            doc_id = chunk.get('document_id')
+            if doc_id:
+                # Get document info from database
+                document = db.query(DocumentDB).filter(DocumentDB.document_id == doc_id).first()
+                if document:
+                    chunk['document_name'] = document.filename
+                    chunk['document_type'] = document.file_type
+                else:
+                    chunk['document_name'] = f"Document {doc_id}"
             
-            # Save to history
-            save_query_to_history(db, request.question, response)
-            return {
-                **response.dict(),
-                "timestamp": datetime.utcnow().isoformat()
-            }
+            enhanced_chunks.append(chunk)
         
-        # Step 2: Generate answer using LLM
-        logger.info(f"🧠 Generating answer with {len(context_chunks)} context chunks")
+        logger.info(f"🧠 Generating answer with {len(enhanced_chunks)} context chunks")
         
+        # Step 3: Generate answer using LLM with enhanced chunks
         llm_result = await asyncio.get_event_loop().run_in_executor(
             executor,
             llm_service.generate_answer,
-            context_chunks,
-            request.question
+            enhanced_chunks,
+            request.question,
+            request.max_tokens,
+            request.temperature
+            
         )
         
-        if not llm_result['success']:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Answer generation failed: {llm_result.get('error', 'Unknown error')}"
-            )
-        
-        # Step 3: Format response
+        # Step 4: Format sources properly
         sources = []
-        if llm_result.get('sources'):
-            for source_chunk in llm_result['sources']:
-                metadata = source_chunk.get('metadata', {})
-                sources.append(SourceInfo(
-                    document_name=metadata.get('filename', 'Unknown Document'),
-                    page=metadata.get('page'),
-                    similarity_score=source_chunk.get('similarity_score', 0.0),
-                    content=source_chunk.get('text', 'No content available.')
-                ))
+        seen_documents = set()
         
-        # Final response
+        for chunk in enhanced_chunks[:3]:  # Top 3 sources
+            doc_name = chunk.get('document_name', 'Unknown')
+            
+            # Avoid duplicate documents
+            if doc_name in seen_documents:
+                continue
+            seen_documents.add(doc_name)
+            
+            source_info = SourceInfo(
+                document_name=doc_name,
+                page=chunk.get('page'),
+                similarity_score=round(chunk.get('similarity_score', 0.0), 3),
+                content=chunk.get('text', '')[:200] + "..." if chunk.get('text') else "No content available"
+            )
+            sources.append(source_info)
+        
+        # Step 5: Create response
         response = QueryResponse(
             success=True,
             answer=llm_result['answer'],
             sources=sources,
             llm_used=llm_result.get('llm_used'),
             response_time=time.time() - start_time,
-            context_chunks_count=llm_result['context_chunks_count']
+            context_chunks_count=len(enhanced_chunks)
         )
         
-        # Save to history
+        # Step 6: Save to history
         save_query_to_history(db, request.question, response)
         
-        logger.info(f"✅ Question answered successfully in {response.response_time:.2f}s")
-
-        return {
-            **response.dict(),
-            "timestamp": datetime.utcnow().isoformat()
-        }
-
+        logger.info(f"✅ Question answered in {response.response_time:.2f}s using {response.llm_used}")
         
+        return response
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"❌ Error processing question: {e}")
-        error_response = QueryResponse(
+        return QueryResponse(
             success=False,
-            answer="I apologize, but I encountered an error while processing your question. Please try again.",
+            answer="I apologize, but I encountered an error while processing your question.",
             sources=[],
             response_time=time.time() - start_time,
             context_chunks_count=0,
             error=str(e)
         )
-        
-        # Save error to history
-        save_query_to_history(db, request.question, error_response)
-        return {
-            **error_response.dict(),
-            "timestamp": datetime.utcnow().isoformat()
-        }
 
 
 @router.get("/history", response_model=QueryHistoryList)
@@ -290,39 +279,57 @@ async def search_documents(request: SearchRequest):
     """
     Search through uploaded documents for relevant chunks.
     
-    This endpoint performs semantic search and returns relevant document chunks
-    without generating an AI answer.
+    Now uses the same high-performance RAG service as /documents/search
+    for consistent, excellent search results.
     """
     try:
-        logger.info(f"🔍 Searching documents for: '{request.query}'")
+        logger.info(f"🔍 Searching with RAG service: '{request.query[:50]}...'")
         
-        # Perform search
-        search_result = await asyncio.get_event_loop().run_in_executor(
-            executor,
-            rag_service.search_documents,
-            request.query,
-            request.top_k,
-            request.score_threshold
+        # Use the same RAG service that powers /documents/search
+        rag_results = rag_service.search_documents(
+            query=request.query,
+            top_k=min(request.top_k, 50),  # Reasonable limit
+            score_threshold=max(0.0, min(1.0, request.score_threshold))
         )
         
-        if not search_result['success']:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Search failed: {search_result.get('error', 'Unknown error')}"
+        # Check if RAG service returned results
+        if not rag_results.get('success', False):
+            return SearchResponse(
+                success=False,
+                query=request.query,
+                results_count=0,
+                results=[],
+                error=rag_results.get('error', 'Search failed')
             )
         
-        response = SearchResponse(
+        # Format results to match SearchResponse schema
+        formatted_results = []
+        for result in rag_results.get('results', []):
+            formatted_result = {
+                'text': result.get('text', ''),
+                'similarity_score': float(result.get('similarity_score', 0.0)),
+                'document_id': result.get('document_id', ''),
+                'document_name': result.get('source', result.get('document_name', 'Unknown')),
+                'chunk_index': result.get('chunk_index', 0),
+                'rank': result.get('rank', len(formatted_results) + 1),
+                'metadata': {
+                    'page': result.get('page'),
+                    'source': result.get('source'),
+                    'chunk_id': result.get('chunk_id'),
+                    **result.get('metadata', {})
+                }
+            }
+            formatted_results.append(formatted_result)
+        
+        logger.info(f"✅ RAG search returned {len(formatted_results)} results")
+        
+        return SearchResponse(
             success=True,
             query=request.query,
-            results_count=search_result['results_count'],
-            results=search_result['results']
+            results_count=len(formatted_results),
+            results=formatted_results
         )
         
-        logger.info(f"✅ Search completed: {response.results_count} results found")
-        return response
-        
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"❌ Search error: {e}")
         return SearchResponse(
