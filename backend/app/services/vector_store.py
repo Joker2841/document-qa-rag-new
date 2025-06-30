@@ -100,7 +100,8 @@ class VectorStore:
         return len(chunks)
     
     def search(self, query: str, top_k: int = 5, 
-               score_threshold: float = 0.3) -> List[Dict[str, Any]]:
+               score_threshold: float = 0.3, 
+               document_ids: List[str] = None) -> List[Dict[str, Any]]:
         """
         Search for similar chunks using semantic similarity.
         
@@ -108,6 +109,7 @@ class VectorStore:
             query: Search query
             top_k: Number of top results to return
             score_threshold: Minimum similarity score (0-1)
+            document_ids: Optional list of document IDs to filter by
         
         Returns:
             List of similar chunks with scores
@@ -116,24 +118,76 @@ class VectorStore:
             print("⚠️ Vector store is empty")
             return []
         
-        print(f"🔍 Searching for: '{query[:50]}...' (top_k={top_k})")
+        print(f"🔍 Searching for: '{query[:50]}...' (top_k={top_k}, filter_docs={len(document_ids) if document_ids else 'None'})")
         
         # Generate query embedding
         query_embedding = self.embedding_service.generate_embeddings([f"query: {query}"])
         query_embedding = query_embedding / np.linalg.norm(query_embedding, axis=1, keepdims=True)
         
-        # Search in FAISS index
-        scores, indices = self.index.search(query_embedding.astype(np.float32), min(top_k, len(self.chunks)))
+        if document_ids:
+            # Option B: Filter during search - Create subset index
+            print(f"🎯 Filtering search to {len(document_ids)} selected documents")
+            
+            # Get indices of chunks belonging to selected documents
+            valid_indices = []
+            for i, chunk in enumerate(self.chunks):
+                if chunk.get('document_id') in document_ids:
+                    valid_indices.append(i)
+            
+            if not valid_indices:
+                print("⚠️ No chunks found for selected documents")
+                return []
+            
+            print(f"📊 Found {len(valid_indices)} chunks from selected documents")
+            
+            # Create temporary index with only selected document chunks
+            subset_embeddings = []
+            for idx in valid_indices:
+                # Extract embedding from main index
+                embedding = np.zeros((1, self.embedding_dim), dtype=np.float32)
+                self.index.reconstruct(idx, embedding[0])
+                subset_embeddings.append(embedding[0])
+            
+            subset_embeddings = np.array(subset_embeddings).astype(np.float32)
+            
+            # Create temporary FAISS index
+            subset_index = faiss.IndexFlatIP(self.embedding_dim)
+            subset_index.add(subset_embeddings)
+            
+            # Search in subset
+            scores, subset_indices = subset_index.search(
+                query_embedding.astype(np.float32), 
+                min(top_k, len(valid_indices))
+            )
+            
+            # Map back to original chunks
+            results = []
+            for score, subset_idx in zip(scores[0], subset_indices[0]):
+                if subset_idx >= 0 and score >= score_threshold:
+                    original_idx = valid_indices[subset_idx]
+                    chunk = self.chunks[original_idx].copy()
+                    chunk['similarity_score'] = float(score)
+                    results.append(chunk)
+            
+            print(f"✅ Returning {len(results)} results from selected documents")
+            
+        else:
+            # Search in entire index (original behavior)
+            scores, indices = self.index.search(
+                query_embedding.astype(np.float32), 
+                min(top_k, len(self.chunks))
+            )
+            
+            # Format results
+            results = []
+            for score, idx in zip(scores[0], indices[0]):
+                if idx >= 0 and score >= score_threshold:
+                    chunk = self.chunks[idx].copy()
+                    chunk['similarity_score'] = float(score)
+                    results.append(chunk)
+            
+            print(f"📊 Found {len(results)} results above threshold {score_threshold}")
         
-        # Format results
-        results = []
-        for score, idx in zip(scores[0], indices[0]):
-            if idx >= 0 and score >= score_threshold:  # Valid result above threshold
-                chunk = self.chunks[idx].copy()
-                chunk['similarity_score'] = float(score)
-                results.append(chunk)
-        
-        print(f"📊 Found {len(results)} results above threshold {score_threshold}")
         return results
     
     def _save_index(self):

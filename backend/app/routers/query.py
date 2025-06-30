@@ -40,7 +40,7 @@ class QueryRequest(BaseModel):
     score_threshold: float = Field(default=0.3, ge=0.0, le=1.0, description="Minimum similarity score")
     max_tokens: int = Field(default=512, ge=50, le=2048, description="Maximum tokens in response")
     temperature: float = Field(default=0.3, ge=0.0, le=1.0, description="LLM temperature")
-
+    document_ids: Optional[List[str]] = Field(default=None, description="Selected document IDs to search within")
 
 class SourceInfo(BaseModel):
     """Source information for citations."""
@@ -142,10 +142,21 @@ async def ask_question(
     
     try:
         # Step 1: Use RAG service for search (your excellent search)
+        selected_doc_ids = []
+        if request.document_ids:
+            # Convert frontend document IDs to backend document_ids
+            selected_docs = db.query(DocumentDB).filter(
+                DocumentDB.id.in_(request.document_ids)
+            ).all()
+            selected_doc_ids = [f"{doc.id}_{doc.filename}" for doc in selected_docs]
+            
+            logger.info(f"🎯 Filtering search to {len(selected_doc_ids)} documents: {selected_doc_ids[:3]}...")
+        
         search_results = rag_service.search_documents(
             query=request.question,
             top_k=request.top_k,
-            score_threshold=request.score_threshold
+            score_threshold=request.score_threshold,
+            document_ids=selected_doc_ids if selected_doc_ids else None
         )
         
         if not search_results.get('success') or not search_results.get('results'):

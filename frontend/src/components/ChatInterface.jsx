@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import toast from 'react-hot-toast';
-import { useAppStore, useSettingsStore } from '../store/store'; // Assuming store is in this location
+import { useAppStore, useSettingsStore } from '../store/store';
 import { 
   Send, 
   Bot, 
@@ -24,7 +24,8 @@ import {
   CheckCircle,
   TrendingUp,
   Brain,
-  Bookmark
+  Bookmark,
+  AlertCircle
 } from 'lucide-react';
 
 const ChatInterface = () => {
@@ -34,43 +35,48 @@ const ChatInterface = () => {
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
-  // State from Zustand store (replaces mock useState)
-  const { 
-    isLoading, 
-    askQuestion, 
-    queryHistory,
-    documents,
-    selectedDocuments 
-  } = useAppStore();
+  // Optimized state selectors to prevent unnecessary re-renders
+  const isLoading = useAppStore(state => state.isLoading);
+  const askQuestion = useAppStore(state => state.askQuestion);
+  const queryHistory = useAppStore(state => state.queryHistory);
+  const documents = useAppStore(state => state.documents);
+  const selectedDocuments = useAppStore(state => state.selectedDocuments);
+  const setActiveTab = useAppStore(state => state.setActiveTab);
 
-  // Settings from Zustand store
-  const { 
-    maxSources, 
-    temperature, 
-    showSources, 
-    autoScroll 
-  } = useSettingsStore();
+  // Settings selectors
+  const maxSources = useSettingsStore(state => state.maxSources);
+  const temperature = useSettingsStore(state => state.temperature);
+  const showSources = useSettingsStore(state => state.showSources);
+  const autoScroll = useSettingsStore(state => state.autoScroll);
 
-  const sampleQuestions = [
+  // Memoized computed values
+  const selectedDocs = useMemo(() => 
+    documents.filter(doc => selectedDocuments.includes(doc.id)), 
+    [documents, selectedDocuments]
+  );
+
+  const reversedQueryHistory = useMemo(() => 
+    [...queryHistory].reverse(), 
+    [queryHistory]
+  );
+
+  const sampleQuestions = useMemo(() => [
     "What are the main topics covered in these documents?",
     "Can you summarize the key findings?",
     "What are the recommendations mentioned?",
     "Explain the methodology used in the research",
     "What are the limitations discussed?",
     "How do these findings compare to industry standards?"
-  ];
+  ], []);
 
-  const scrollToBottom = () => {
+  // Memoized callbacks
+  const scrollToBottom = useCallback(() => {
     if (autoScroll) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  };
+  }, [autoScroll]);
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [queryHistory, isLoading, autoScroll]);
-
-  const handleSubmit = async (e) => {
+  const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
@@ -81,7 +87,8 @@ const ChatInterface = () => {
 
     const question = input.trim();
     setInput('');
-
+    setCurrentQuestion(question); // Track the question being asked
+    
     try {
       await askQuestion(question, {
         maxSources,
@@ -90,27 +97,29 @@ const ChatInterface = () => {
     } catch (error) {
       console.error('Failed to ask question:', error);
       toast.error('There was an error processing your question.');
+    } finally {
+      setCurrentQuestion(''); // Clear after processing
     }
-  };
+  }, [input, isLoading, selectedDocuments.length, askQuestion, maxSources, temperature]);
 
-  const handleSampleQuestion = (question) => {
+  const handleSampleQuestion = useCallback((question) => {
     setInput(question);
     inputRef.current?.focus();
-  };
+  }, []);
 
-  const copyToClipboard = (text) => {
+  const copyToClipboard = useCallback((text) => {
     navigator.clipboard.writeText(text);
     toast.success('Copied to clipboard!');
-  };
+  }, []);
 
-  const toggleSourceExpansion = (sourceId) => {
+  const toggleSourceExpansion = useCallback((sourceId) => {
     setExpandedSources(prev => ({
       ...prev,
       [sourceId]: !prev[sourceId]
     }));
-  };
+  }, []);
   
-  const toggleBookmark = (messageId) => {
+  const toggleBookmark = useCallback((messageId) => {
     setBookmarkedMessages(prev => {
       const newSet = new Set(prev);
       if (newSet.has(messageId)) {
@@ -120,9 +129,30 @@ const ChatInterface = () => {
       }
       return newSet;
     });
-  };
+  }, []);
 
-  const selectedDocs = documents.filter(doc => selectedDocuments.includes(doc.id));
+  const handleQuickAction = useCallback((action) => {
+    const template = `${action} the key points from these documents`;
+    setInput(template);
+    inputRef.current?.focus();
+  }, []);
+
+  const handleBrowseDocuments = useCallback(() => {
+    setActiveTab('documents');
+  }, [setActiveTab]);
+
+  // Effects
+  useEffect(() => {
+    scrollToBottom();
+  }, [queryHistory, isLoading, scrollToBottom]);
+
+  // Helper function for similarity score display
+  const formatSimilarityScore = useCallback((score) => {
+    if (score === undefined || score === null) return 'N/A';
+    return `${Math.round(score * 100)}% Match`;
+  }, []);
+
+  const [currentQuestion, setCurrentQuestion] = useState('');
 
   return (
     <div className="flex flex-col h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/40">
@@ -140,7 +170,7 @@ const ChatInterface = () => {
                 whileHover={{ scale: 1.05, rotate: 5 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Bot className="w-8 h-8 text-white" />
+                <Bot className="w-8 h-8 text-white" aria-hidden="true" />
                 <motion.div
                   className="absolute -top-1 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-white"
                   animate={{ scale: [1, 1.2, 1] }}
@@ -152,7 +182,7 @@ const ChatInterface = () => {
                   AI Research Assistant
                 </h1>
                 <p className="text-slate-600 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-500" />
+                  <Sparkles className="w-4 h-4 text-amber-500" aria-hidden="true" />
                   Analyzing {selectedDocs.length} document{selectedDocs.length !== 1 ? 's' : ''} with advanced AI
                 </p>
               </div>
@@ -216,7 +246,7 @@ const ChatInterface = () => {
                 scale: { repeat: Infinity, duration: 2 }
               }}
             >
-              <Brain className="w-12 h-12 text-blue-600" />
+              <Brain className="w-12 h-12 text-blue-600" aria-hidden="true" />
             </motion.div>
             
             <motion.h2 
@@ -246,7 +276,7 @@ const ChatInterface = () => {
                 transition={{ delay: 0.6 }}
               >
                 <div className="flex items-center justify-center gap-3 mb-8">
-                  <Lightbulb className="w-5 h-5 text-amber-500" />
+                  <Lightbulb className="w-5 h-5 text-amber-500" aria-hidden="true" />
                   <span className="text-slate-700 font-semibold">Suggested Questions</span>
                 </div>
                 
@@ -261,10 +291,11 @@ const ChatInterface = () => {
                       className="group p-5 text-left bg-white/70 backdrop-blur-sm hover:bg-white/90 rounded-2xl border border-white/50 hover:border-blue-200/50 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1"
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
+                      aria-label={`Ask: ${question}`}
                     >
                       <div className="flex items-start gap-3">
                         <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                          <MessageSquare className="w-4 h-4 text-white" />
+                          <MessageSquare className="w-4 h-4 text-white" aria-hidden="true" />
                         </div>
                         <p className="text-slate-700 group-hover:text-slate-900 transition-colors font-medium">
                           {question}
@@ -279,225 +310,279 @@ const ChatInterface = () => {
         )}
 
         {/* Enhanced Query History */}
-        <AnimatePresence>
-          {[...queryHistory].reverse().map((item, index) => (
-            <motion.div
-              key={item.id}
-              initial={{ opacity: 0, y: 30, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -30, scale: 0.95 }}
-              transition={{ duration: 0.4 }}
-              className="space-y-6"
-            >
-              {/* User Question */}
-              <div className="flex gap-4 items-start">
-                <motion.div 
-                  className="w-10 h-10 bg-gradient-to-r from-slate-600 to-slate-700 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg"
-                  whileHover={{ scale: 1.1, rotate: 5 }}
-                >
-                  <User className="w-5 h-5 text-white" />
-                </motion.div>
-                <motion.div 
-                  className="flex-1 max-w-4xl"
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.1 }}
-                >
-                  <div className="bg-gradient-to-r from-slate-50 to-blue-50/50 rounded-2xl p-6 border border-slate-200/50 shadow-md">
-                    <p className="text-slate-800 font-medium text-lg leading-relaxed">{item.question}</p>
-                    <div className="flex items-center gap-2 mt-4 text-sm text-slate-500">
-                      <Clock className="w-4 h-4" />
-                      <span>{new Date(item.timestamp).toLocaleTimeString()}</span>
+        <AnimatePresence mode="wait">
+          {reversedQueryHistory
+            .filter(item => item.question && item.answer && item.answer.answer && item.answer.answer.trim() !== '' && !item.isError)
+            .map((item, index) => (
+              <motion.div
+                key={item.id}
+                initial={{ opacity: 0, y: 30, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -30, scale: 0.95 }}
+                transition={{ duration: 0.4 }}
+                className="space-y-6"
+              >
+                {/* User Question */}
+                <div className="flex gap-4 items-start">
+                  <motion.div 
+                    className="w-10 h-10 bg-gradient-to-r from-slate-600 to-slate-700 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg"
+                    whileHover={{ scale: 1.1, rotate: 5 }}
+                  >
+                    <User className="w-5 h-5 text-white" aria-hidden="true" />
+                  </motion.div>
+                  <motion.div 
+                    className="flex-1 max-w-4xl"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.1 }}
+                  >
+                    <div className="bg-gradient-to-r from-slate-50 to-blue-50/50 rounded-2xl p-6 border border-slate-200/50 shadow-md">
+                      <p className="text-slate-800 font-medium text-lg leading-relaxed">{item.question}</p>
+                      <div className="flex items-center gap-2 mt-4 text-sm text-slate-500">
+                        <Clock className="w-4 h-4" aria-hidden="true" />
+                        <span>{new Date(item.timestamp).toLocaleTimeString()}</span>
+                      </div>
                     </div>
-                  </div>
-                </motion.div>
-              </div>
+                  </motion.div>
+                </div>
 
-              {/* AI Answer */}
-              <div className="flex gap-4 items-start">
-                <motion.div 
-                  className="relative w-10 h-10 bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg"
-                  whileHover={{ scale: 1.1, rotate: -5 }}
-                >
-                  <Bot className="w-5 h-5 text-white" />
-                </motion.div>
-                <motion.div 
-                  className="flex-1 max-w-4xl"
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.2 }}
-                >
-                  <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 border border-white/50 shadow-xl">
-                    <div className="prose prose-slate max-w-none text-slate-800 leading-relaxed">
-                      <ReactMarkdown
-                        children={item.answer.answer}
-                        components={{
-                          strong: ({node, ...props}) => <strong className="font-semibold text-slate-900 bg-blue-50 px-1 rounded" {...props} />,
-                          p: ({node, ...props}) => <p className="mb-4 last:mb-0" {...props} />,
-                        }}
-                      />
-                    </div>
+                {/* AI Answer */}
+                <div className="flex gap-4 items-start">
+                  <motion.div 
+                    className="relative w-10 h-10 bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg"
+                    whileHover={{ scale: 1.1, rotate: -5 }}
+                  >
+                    <Bot className="w-5 h-5 text-white" aria-hidden="true" />
+                  </motion.div>
+                  <motion.div 
+                    className="flex-1 max-w-4xl"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.2 }}
+                  >
+                    <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 border border-white/50 shadow-xl">
+                      <div className="prose prose-slate max-w-none text-slate-800 leading-relaxed">
+                        <ReactMarkdown
+                          components={{
+                            strong: ({node, ...props}) => <strong className="font-semibold text-slate-900 bg-blue-50 px-1 rounded" {...props} />,
+                            p: ({node, ...props}) => <p className="mb-4 last:mb-0" {...props} />,
+                          }}
+                        >
+                          {item.answer.answer}
+                        </ReactMarkdown>
+                      </div>
 
-                    {/* Enhanced Sources Section */}
-                    {showSources && item.answer.sources && item.answer.sources.length > 0 && (
+                      {/* Enhanced Sources Section */}
+                      {showSources && item.answer.sources && item.answer.sources.length > 0 && (
+                        <motion.div 
+                          className="mt-6 pt-6 border-t border-slate-200"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.4 }}
+                        >
+                          <div className="flex items-center gap-3 mb-4">
+                            <div className="p-2 bg-gradient-to-r from-emerald-500 to-teal-500 rounded-lg">
+                              <FileText className="w-4 h-4 text-white" aria-hidden="true" />
+                            </div>
+                            <h4 className="font-semibold text-slate-800">
+                              Sources ({item.answer.sources.length})
+                            </h4>
+                            <div className="flex-1 h-px bg-gradient-to-r from-slate-200 to-transparent" />
+                          </div>
+                          
+                          <div className="space-y-3">
+                            {item.answer.sources.map((source, sourceIndex) => {
+                              const sourceId = `${item.id}-${sourceIndex}`;
+                              return (
+                                <motion.div 
+                                  key={sourceId}
+                                  className="bg-gradient-to-r from-slate-50 to-blue-50/30 rounded-xl p-4 border border-slate-200/50"
+                                  whileHover={{ scale: 1.01 }}
+                                >
+                                  <div className="flex items-center justify-between mb-3">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-lg flex items-center justify-center">
+                                        <span className="text-white text-xs font-bold">
+                                          {source.document_name?.charAt(0) || 'D'}
+                                        </span>
+                                      </div>
+                                      <span className="font-medium text-slate-800 truncate">
+                                        {source.document_name}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <div className="px-3 py-1 bg-gradient-to-r from-emerald-100 to-teal-100 rounded-full text-xs font-semibold text-emerald-700">
+                                        {formatSimilarityScore(source.similarity_score)}
+                                      </div>
+                                      <motion.button
+                                        onClick={() => toggleSourceExpansion(sourceId)}
+                                        className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+                                        whileHover={{ scale: 1.1 }}
+                                        whileTap={{ scale: 0.9 }}
+                                        aria-label={expandedSources[sourceId] ? 'Collapse source' : 'Expand source'}
+                                      >
+                                        {expandedSources[sourceId] ? (
+                                          <ChevronUp className="w-4 h-4" aria-hidden="true" />
+                                        ) : (
+                                          <ChevronDown className="w-4 h-4" aria-hidden="true" />
+                                        )}
+                                      </motion.button>
+                                    </div>
+                                  </div>
+                                  
+                                  <AnimatePresence>
+                                    {expandedSources[sourceId] && (
+                                      <motion.div
+                                        initial={{ opacity: 0, height: 0 }}
+                                        animate={{ opacity: 1, height: 'auto' }}
+                                        exit={{ opacity: 0, height: 0 }}
+                                        className="text-slate-600 border-t border-slate-200 pt-3 mt-3 bg-white/50 rounded-lg p-3"
+                                      >
+                                        <p className="whitespace-pre-wrap leading-relaxed">{source.content}</p>
+                                      </motion.div>
+                                    )}
+                                  </AnimatePresence>
+                                </motion.div>
+                              );
+                            })}
+                          </div>
+                        </motion.div>
+                      )}
+
+                      {/* Enhanced Action Buttons */}
                       <motion.div 
-                        className="mt-6 pt-6 border-t border-slate-200"
+                        className="flex items-center justify-between mt-6 pt-4 border-t border-slate-200"
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        transition={{ delay: 0.4 }}
+                        transition={{ delay: 0.6 }}
                       >
-                        <div className="flex items-center gap-3 mb-4">
-                          <div className="p-2 bg-gradient-to-r from-emerald-500 to-teal-500 rounded-lg">
-                            <FileText className="w-4 h-4 text-white" />
-                          </div>
-                          <h4 className="font-semibold text-slate-800">
-                            Sources ({item.answer.sources.length})
-                          </h4>
-                          <div className="flex-1 h-px bg-gradient-to-r from-slate-200 to-transparent" />
+                        <div className="flex items-center gap-3">
+                          <motion.button
+                            onClick={() => copyToClipboard(item.answer.answer)}
+                            className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            aria-label="Copy answer to clipboard"
+                          >
+                            <Copy className="w-4 h-4" aria-hidden="true" />
+                            Copy
+                          </motion.button>
+                          <motion.button
+                            onClick={() => toggleBookmark(item.id)}
+                            className={`flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors ${
+                              bookmarkedMessages.has(item.id)
+                                ? 'text-amber-600 bg-amber-100 hover:bg-amber-200'
+                                : 'text-slate-600 hover:text-amber-600 bg-slate-100 hover:bg-amber-100'
+                            }`}
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            aria-label={bookmarkedMessages.has(item.id) ? 'Remove from bookmarks' : 'Add to bookmarks'}
+                          >
+                            <Bookmark className={`w-4 h-4 ${bookmarkedMessages.has(item.id) ? 'fill-current' : ''}`} aria-hidden="true" />
+                            {bookmarkedMessages.has(item.id) ? 'Saved' : 'Save'}
+                          </motion.button>
                         </div>
-                        
-                        <div className="space-y-3">
-                          {item.answer.sources.map((source, sourceIndex) => (
-                            <motion.div 
-                              key={sourceIndex} 
-                              className="bg-gradient-to-r from-slate-50 to-blue-50/30 rounded-xl p-4 border border-slate-200/50"
-                              whileHover={{ scale: 1.01 }}
-                            >
-                              <div className="flex items-center justify-between mb-3">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-lg flex items-center justify-center">
-                                    <span className="text-white text-xs font-bold">
-                                      {source.document_name?.charAt(0) || 'D'}
-                                    </span>
-                                  </div>
-                                  <span className="font-medium text-slate-800 truncate">
-                                    {source.document_name}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <div className="px-3 py-1 bg-gradient-to-r from-emerald-100 to-teal-100 rounded-full text-xs font-semibold text-emerald-700">
-                                    {Math.round(source.similarity_score * 100)}% Match
-                                  </div>
-                                  <motion.button
-                                    onClick={() => toggleSourceExpansion(`${item.id}-${sourceIndex}`)}
-                                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
-                                    whileHover={{ scale: 1.1 }}
-                                    whileTap={{ scale: 0.9 }}
-                                  >
-                                    {expandedSources[`${item.id}-${sourceIndex}`] ? (
-                                      <ChevronUp className="w-4 h-4" />
-                                    ) : (
-                                      <ChevronDown className="w-4 h-4" />
-                                    )}
-                                  </motion.button>
-                                </div>
-                              </div>
-                              
-                              <AnimatePresence>
-                                {expandedSources[`${item.id}-${sourceIndex}`] && (
-                                  <motion.div
-                                    initial={{ opacity: 0, height: 0 }}
-                                    animate={{ opacity: 1, height: 'auto' }}
-                                    exit={{ opacity: 0, height: 0 }}
-                                    className="text-slate-600 border-t border-slate-200 pt-3 mt-3 bg-white/50 rounded-lg p-3"
-                                  >
-                                    <p className="whitespace-pre-wrap leading-relaxed">{source.content}</p>
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
-                            </motion.div>
-                          ))}
+                        <div className="flex items-center gap-3 text-sm text-slate-500">
+                          <div className="flex items-center gap-1">
+                            <Zap className="w-4 h-4 text-emerald-500" aria-hidden="true" />
+                            <span>{item.answer.response_time?.toFixed(1) || '...'}s</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <CheckCircle className="w-4 h-4 text-blue-500" aria-hidden="true" />
+                            <span>Verified</span>
+                          </div>
                         </div>
                       </motion.div>
-                    )}
+                    </div>
+                  </motion.div>
+                </div>
+              </motion.div>
+            ))}
+        </AnimatePresence>
 
-                    {/* Enhanced Action Buttons */}
-                    <motion.div 
-                      className="flex items-center justify-between mt-6 pt-4 border-t border-slate-200"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: 0.6 }}
-                    >
-                      <div className="flex items-center gap-3">
-                        <motion.button
-                          onClick={() => copyToClipboard(item.answer.answer)}
-                          className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                          whileHover={{ scale: 1.05 }}
-                          whileTap={{ scale: 0.95 }}
-                        >
-                          <Copy className="w-4 h-4" />
-                          Copy
-                        </motion.button>
-                        <motion.button
-                          onClick={() => toggleBookmark(item.id)}
-                          className={`flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors ${
-                            bookmarkedMessages.has(item.id)
-                              ? 'text-amber-600 bg-amber-100 hover:bg-amber-200'
-                              : 'text-slate-600 hover:text-amber-600 bg-slate-100 hover:bg-amber-100'
-                          }`}
-                          whileHover={{ scale: 1.05 }}
-                          whileTap={{ scale: 0.95 }}
-                        >
-                          <Bookmark className={`w-4 h-4 ${bookmarkedMessages.has(item.id) ? 'fill-current' : ''}`} />
-                          {bookmarkedMessages.has(item.id) ? 'Saved' : 'Save'}
-                        </motion.button>
-                      </div>
-                      <div className="flex items-center gap-3 text-sm text-slate-500">
-                        <div className="flex items-center gap-1">
-                          <Zap className="w-4 h-4 text-emerald-500" />
-                          <span>{item.answer.response_time?.toFixed(1) || '...'}s</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <CheckCircle className="w-4 h-4 text-blue-500" />
-                          <span>Verified</span>
-                        </div>
-                      </div>
-                    </motion.div>
+        {/* Error Messages */}
+        <AnimatePresence>
+          {reversedQueryHistory
+            .filter(item => item.isError)
+            .map((item) => (
+              <motion.div
+                key={item.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="max-w-4xl mx-auto"
+              >
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
+                  <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <AlertCircle className="w-5 h-5 text-red-600" />
                   </div>
-                </motion.div>
-              </div>
-            </motion.div>
-          ))}
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-red-900 mb-1">Error processing question</h4>
+                    <p className="text-red-700 text-sm">{item.question}</p>
+                    <p className="text-red-600 text-sm mt-2">Please try again or check your connection.</p>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
         </AnimatePresence>
 
         {/* Loading State */}
         <AnimatePresence>
-          {isLoading && (
+          {isLoading && currentQuestion && (
             <motion.div
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -30 }}
-              className="flex gap-4 items-start"
+              className="space-y-6"
             >
-              <div className="w-10 h-10 bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
-                <Bot className="w-5 h-5 text-white" />
-              </div>
-              <div className="flex-1 max-w-4xl">
-                <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 border border-white/50 shadow-xl">
-                  <div className="flex items-center gap-4">
-                    <div className="flex space-x-2">
-                      {[0, 1, 2].map((i) => (
-                        <motion.div
-                          key={i}
-                          className="w-3 h-3 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"
-                          animate={{ 
-                            scale: [1, 1.5, 1],
-                            opacity: [0.5, 1, 0.5]
-                          }}
-                          transition={{ 
-                            repeat: Infinity, 
-                            duration: 1.5,
-                            delay: i * 0.2
-                          }}
-                        />
-                      ))}
+              {/* Show the question being processed */}
+              <div className="flex gap-4 items-start">
+                <div className="w-10 h-10 bg-gradient-to-r from-slate-600 to-slate-700 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg">
+                  <User className="w-5 h-5 text-white" aria-hidden="true" />
+                </div>
+                <div className="flex-1 max-w-4xl">
+                  <div className="bg-gradient-to-r from-slate-50 to-blue-50/50 rounded-2xl p-6 border border-slate-200/50 shadow-md">
+                    <p className="text-slate-800 font-medium text-lg leading-relaxed">{currentQuestion}</p>
+                    <div className="flex items-center gap-2 mt-4 text-sm text-slate-500">
+                      <Clock className="w-4 h-4" aria-hidden="true" />
+                      <span>Just now</span>
                     </div>
-                    <span className="text-slate-600 font-medium">Analyzing documents and generating response...</span>
                   </div>
-                  <div className="mt-4">
-                    <div className="flex items-center gap-2 text-sm text-slate-500">
-                      <Brain className="w-4 h-4" />
-                      <span>Processing with advanced AI models</span>
+                </div>
+              </div>
+
+              {/* AI Processing Animation */}
+              <div className="flex gap-4 items-start">
+                <div className="w-10 h-10 bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
+                  <Bot className="w-5 h-5 text-white" aria-hidden="true" />
+                </div>
+                <div className="flex-1 max-w-4xl">
+                  <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 border border-white/50 shadow-xl">
+                    <div className="flex items-center gap-4">
+                      <div className="flex space-x-2">
+                        {[0, 1, 2].map((i) => (
+                          <motion.div
+                            key={i}
+                            className="w-3 h-3 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"
+                            animate={{ 
+                              scale: [1, 1.5, 1],
+                              opacity: [0.5, 1, 0.5]
+                            }}
+                            transition={{ 
+                              repeat: Infinity, 
+                              duration: 1.5,
+                              delay: i * 0.2
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <span className="text-slate-600 font-medium">Analyzing documents and generating response...</span>
+                    </div>
+                    <div className="mt-4">
+                      <div className="flex items-center gap-2 text-sm text-slate-500">
+                        <Brain className="w-4 h-4" aria-hidden="true" />
+                        <span>Processing with advanced AI models</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -524,16 +609,17 @@ const ChatInterface = () => {
             >
               <div className="mb-4">
                 <div className="w-16 h-16 bg-gradient-to-r from-slate-200 to-slate-300 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                  <Search className="w-8 h-8 text-slate-500" />
+                  <Search className="w-8 h-8 text-slate-500" aria-hidden="true" />
                 </div>
                 <p className="text-slate-600 text-lg font-medium mb-4">Select documents to start asking questions</p>
                 <motion.button
-                  onClick={() => useAppStore.getState().setActiveTab('documents')}
+                  onClick={handleBrowseDocuments}
                   className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-300"
                   whileHover={{ scale: 1.05, y: -2 }}
                   whileTap={{ scale: 0.95 }}
+                  aria-label="Browse and select documents"
                 >
-                  <Plus className="w-5 h-5" />
+                  <Plus className="w-5 h-5" aria-hidden="true" />
                   Browse Documents
                 </motion.button>
               </div>
@@ -551,6 +637,7 @@ const ChatInterface = () => {
                     className="w-full px-6 py-4 pr-32 bg-white/90 backdrop-blur-sm border border-white/50 rounded-2xl shadow-lg focus:ring-4 focus:ring-blue-500/20 focus:border-blue-400 outline-none transition-all duration-300 text-lg placeholder-slate-400"
                     disabled={isLoading}
                     whileFocus={{ scale: 1.02 }}
+                    aria-label="Ask a question about your documents"
                   />
                   <div className="absolute right-4 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
                     <motion.button
@@ -558,8 +645,10 @@ const ChatInterface = () => {
                       className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
                       whileHover={{ scale: 1.1 }}
                       whileTap={{ scale: 0.9 }}
+                      aria-label="Voice input (coming soon)"
+                      disabled
                     >
-                      <Mic className="w-5 h-5" />
+                      <Mic className="w-5 h-5" aria-hidden="true" />
                     </motion.button>
                     <div className="w-px h-6 bg-slate-300" />
                     <motion.button
@@ -568,8 +657,9 @@ const ChatInterface = () => {
                       className="p-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                       whileHover={{ scale: 1.1 }}
                       whileTap={{ scale: 0.9 }}
+                      aria-label="Send question"
                     >
-                      <Send className="w-5 h-5" />
+                      <Send className="w-5 h-5" aria-hidden="true" />
                     </motion.button>
                   </div>
                 </div>
@@ -584,10 +674,11 @@ const ChatInterface = () => {
                       <motion.button
                         key={action}
                         type="button"
-                        onClick={() => setInput(`${action} the key points from these documents`)}
+                        onClick={() => handleQuickAction(action)}
                         className="px-3 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors"
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
+                        aria-label={`Quick action: ${action}`}
                       >
                         {action}
                       </motion.button>

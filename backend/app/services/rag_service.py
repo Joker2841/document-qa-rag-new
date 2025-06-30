@@ -84,7 +84,8 @@ class RAGService:
             return error_result
     
     def search_documents(self, query: str, top_k: int = 5, 
-                        score_threshold: float = 0.3) -> Dict[str, Any]:
+                        score_threshold: float = 0.3,
+                        document_ids: List[str] = None) -> Dict[str, Any]:
         """
         Search for relevant document chunks.
         
@@ -92,17 +93,21 @@ class RAGService:
             query: Search query
             top_k: Number of top results to return
             score_threshold: Minimum similarity score
+            document_ids: Optional list of document IDs to filter by
         
         Returns:
             Search results with metadata
         """
         print(f"🔍 Searching for: '{query}'")
+        if document_ids:
+            print(f"📌 Filtering to {len(document_ids)} selected documents")
         
         try:
             results = self.vector_store.search(
                 query=query,
                 top_k=top_k,
-                score_threshold=score_threshold
+                score_threshold=score_threshold,
+                document_ids=document_ids
             )
             
             return {
@@ -110,6 +115,7 @@ class RAGService:
                 'query': query,
                 'results_count': len(results),
                 'results': results,
+                'filtered_by_documents': document_ids is not None,
                 'vector_store_stats': self.vector_store.get_stats()
             }
             

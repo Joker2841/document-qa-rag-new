@@ -13,6 +13,10 @@ from datetime import datetime
 from fastapi.responses import FileResponse, Response
 import mimetypes
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 rag_service = RAGService()
 router = APIRouter(
     prefix="/documents",
@@ -25,17 +29,27 @@ router = APIRouter(
 async def search_documents(
     query: str = Form(...),
     top_k: int = Form(5),
-    score_threshold: float = Form(0.3)
+    score_threshold: float = Form(0.3),
+    document_ids: Optional[List[str]] = Form(None),
+    db: Session = Depends(get_db)
 ):
     """Search for relevant document chunks using semantic similarity."""
     try:
         if not query.strip():
             return {"success": False, "error": "Query cannot be empty"}
         
+        # Convert frontend document IDs to backend document_ids if provided
+        backend_doc_ids = None
+        if document_ids:
+            docs = db.query(DocumentDB).filter(DocumentDB.id.in_(document_ids)).all()
+            backend_doc_ids = [doc.document_id for doc in docs if doc.document_id]
+            print(f"🎯 Filtering search to {len(backend_doc_ids)} documents")
+        
         results = rag_service.search_documents(
             query=query,
             top_k=min(top_k, 20),  # Limit to max 20 results
-            score_threshold=max(0.0, min(1.0, score_threshold))  # Clamp between 0-1
+            score_threshold=max(0.0, min(1.0, score_threshold)),  # Clamp between 0-1
+            document_ids=backend_doc_ids
         )
         
         return results

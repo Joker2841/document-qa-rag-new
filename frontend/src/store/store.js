@@ -91,37 +91,19 @@ export const useAppStore = create((set, get) => ({
 
   setCurrentQuestion: (question) => set({ currentQuestion: question }),
 
-askQuestion: async (question, options = {}) => {
+  askQuestion: async (question, options = {}) => {
     const { selectedDocuments, queryHistory } = get();
-    const tempId = `temp_${Date.now()}`;
 
-    // Step 1: Immediately add the user's question and a placeholder to the history
-    const optimisticUpdate = {
-      id: tempId,
-      question,
-      answer: {
-        answer: '...', // This will be replaced by the loading indicator in the UI
-        sources: [],
-        response_time: 0,
-      },
-      timestamp: new Date().toISOString(),
-      documentIds: selectedDocuments,
-      isPlaceholder: true, // Flag to indicate this is a temporary item
-    };
-
-    set({
-      isLoading: true,
-      queryHistory: [optimisticUpdate, ...queryHistory.slice(0, 49)],
-      activeTab: 'chat',
-    });
+    // Don't add placeholder to history, just set loading state
+    set({ isLoading: true });
 
     try {
-      // Step 2: Make the actual API call
+      // Make the actual API call
       const result = await queryAPI.askQuestion(question, selectedDocuments, options);
 
-      // Step 3: On success, find the placeholder and replace it with the real answer
-      const finalHistoryItem = {
-        id: result.timestamp || tempId, // Use a real ID if available
+      // On success, add the complete item to history
+      const historyItem = {
+        id: result.timestamp || `query_${Date.now()}`,
         question,
         answer: {
           answer: result.answer,
@@ -134,29 +116,30 @@ askQuestion: async (question, options = {}) => {
 
       set((state) => ({
         isLoading: false,
-        queryHistory: state.queryHistory.map((item) =>
-          item.id === tempId ? finalHistoryItem : item
-        ),
+        queryHistory: [historyItem, ...state.queryHistory.slice(0, 49)],
+        activeTab: 'chat',
       }));
 
       return result;
 
     } catch (error) {
-      // Step 4: On error, update the placeholder to show an error message
+      // On error, add error item to history
       const errorHistoryItem = {
-        ...optimisticUpdate,
+        id: `error_${Date.now()}`,
+        question,
         answer: {
           answer: 'Sorry, an error occurred while processing your question. Please try again.',
           sources: [],
+          response_time: 0,
         },
+        timestamp: new Date().toISOString(),
+        documentIds: selectedDocuments,
         isError: true,
       };
 
       set((state) => ({
         isLoading: false,
-        queryHistory: state.queryHistory.map((item) =>
-          item.id === tempId ? errorHistoryItem : item
-        ),
+        queryHistory: [errorHistoryItem, ...state.queryHistory.slice(0, 49)],
       }));
       
       console.error('Failed to ask question:', error);
