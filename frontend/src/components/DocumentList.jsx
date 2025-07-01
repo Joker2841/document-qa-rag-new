@@ -31,11 +31,14 @@ import {
   Tag,
   Folder,
   FolderOpen,
-  Info
+  Info,
+  MessageSquare
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAppStore } from '../store/store';
 import { utils } from '../services/api';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
 
 const DocumentList = () => {
   // State management
@@ -48,6 +51,7 @@ const DocumentList = () => {
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [draggedOver, setDraggedOver] = useState(false);
   const [expandedDoc, setExpandedDoc] = useState(null);
+  const setActiveTab = useAppStore(state => state.setActiveTab);
   
   const { 
     documents, 
@@ -60,6 +64,8 @@ const DocumentList = () => {
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [stats, setStats] = useState({ totalSize: 0, processingCount: 0, readyCount: 0 });
+  const [startDate, setStartDate] = useState(null);
+  const [endDate, setEndDate] = useState(null);
 
   // Calculate document statistics
 useEffect(() => {
@@ -102,6 +108,10 @@ const handlePreview = async (doc) => {
     toast.error('Failed to preview document');
   }
 };
+
+const handleAskQuestions = useCallback(() => {
+  setActiveTab('chat');
+}, [setActiveTab]);
 
 const handleDownload = async (doc) => {
   try {
@@ -183,10 +193,16 @@ const formatFileSize = (bytes) => {
                         doc.type === filterType ||
                         (filterType === 'selected' && selectedDocuments.includes(doc.id));
       
-      // Date range filter
-      const matchesDateRange = !dateRange.start || !dateRange.end || 
-        (new Date(doc.created_at || doc.uploadedAt) >= new Date(dateRange.start) &&
-        new Date(doc.created_at || doc.uploadedAt) <= new Date(dateRange.end));
+      // Date range filter (fix: only apply if both start and end are set, and include boundaries)
+      let matchesDateRange = true;
+      if (dateRange.start && dateRange.end) {
+        const docDate = new Date(doc.created_at || doc.uploadedAt);
+        const startDate = new Date(dateRange.start);
+        const endDate = new Date(dateRange.end);
+        // Set endDate to end of the day
+        endDate.setHours(23, 59, 59, 999);
+        matchesDateRange = docDate >= startDate && docDate <= endDate;
+      }
       
       return matchesSearch && matchesType && matchesDateRange;
     });
@@ -490,7 +506,19 @@ const formatFileSize = (bytes) => {
           >
             <Filter className="w-4 h-4" />
           </button>
-          
+          {(startDate || endDate) && (
+            <button
+              type="button"
+              onClick={() => {
+                setStartDate(null);
+                setEndDate(null);
+                setDateRange({ start: '', end: '' });
+              }}
+              className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200 transition-colors"
+            >
+              Clear Date Filter
+            </button>
+          )}
           <button
             onClick={handleRefresh}
             disabled={isRefreshing}
@@ -511,7 +539,7 @@ const formatFileSize = (bytes) => {
               <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
               <input
                 type="text"
-                placeholder="Search by filename, content, or tags..."
+                placeholder="Search by filename..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 text-gray-900 placeholder-gray-500"
@@ -587,27 +615,49 @@ const formatFileSize = (bytes) => {
                 className="mt-6 pt-6 border-t border-gray-200 space-y-4"
               >
                 {/* Date Range */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       From Date
                     </label>
-                    <input
-                      type="date"
-                      value={dateRange.start}
-                      onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                    <DatePicker
+                      selected={startDate}
+                      onChange={date => {
+                        setStartDate(date);
+                        if (endDate && date && date > endDate) {
+                          setEndDate(null);
+                        }
+                        setDateRange(prev => ({ ...prev, start: date ? date.toISOString().slice(0, 10) : '' }));
+                      }}
+                      selectsStart
+                      startDate={startDate}
+                      endDate={endDate}
+                      maxDate={endDate || null}
+                      placeholderText="From date"
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                      dateFormat="MMMM d, yyyy"
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       To Date
                     </label>
-                    <input
-                      type="date"
-                      value={dateRange.end}
-                      onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                    <DatePicker
+                      selected={endDate}
+                      onChange={date => {
+                        setEndDate(date);
+                        if (startDate && date && date < startDate) {
+                          setStartDate(null);
+                        }
+                        setDateRange(prev => ({ ...prev, end: date ? date.toISOString().slice(0, 10) : '' }));
+                      }}
+                      selectsEnd
+                      startDate={startDate}
+                      endDate={endDate}
+                      minDate={startDate || null}
+                      placeholderText="To date"
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                      dateFormat="MMMM d, yyyy"
                     />
                   </div>
                 </div>
@@ -665,22 +715,27 @@ const formatFileSize = (bytes) => {
                 </button>
                 
                 {selectedDocuments.length > 0 && (
-                  <span className="text-sm text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
-                    {selectedDocuments.length} document{selectedDocuments.length !== 1 ? 's' : ''} selected for queries
-                  </span>
-                )}
-              </div>
-                {selectedDocuments.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={handleShareSelected}
-                      className="flex items-center gap-2 px-3 py-2 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"
-                    >
-                      <Share2 className="w-4 h-4" />
-                      Share Selected
-                    </button>
+                  <div className="w-full flex justify-center items-center my-8">
+                    <div className="bg-white rounded-2xl shadow-lg px-10 py-8 flex flex-col items-center max-w-sm w-full">
+                      <div className="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center mb-4">
+                        <MessageSquare className="w-6 h-6 text-blue-500" aria-hidden="true" />
+                      </div>
+                      <p className="text-slate-700 text-base font-semibold mb-1">
+                        {selectedDocuments.length} document{selectedDocuments.length !== 1 ? 's' : ''} selected
+                      </p>
+                      <p className="text-slate-500 mb-4 text-sm">Ready to ask questions?</p>
+                      <button
+                        onClick={handleAskQuestions}
+                        className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-xl shadow transition-all duration-200 text-base focus:outline-none focus:ring-2 focus:ring-green-300"
+                        aria-label="Go to Ask Questions"
+                      >
+                        <MessageSquare className="w-5 h-5" aria-hidden="true" />
+                        Go to Ask Questions
+                      </button>
+                    </div>
                   </div>
                 )}
+              </div>
             </div>
           )}
         </div>
@@ -766,9 +821,9 @@ const formatFileSize = (bytes) => {
                   </div>
                   
                   {doc.created_at && (
-                    <div className="flex items-center gap-2 text-xs text-gray-500">
-                      <Calendar className="w-3 h-3" />
-                      {utils.formatDate(doc.created_at)}
+                    <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
+                      <Calendar className="w-3 h-3 text-blue-400" />
+                      <span className="font-medium">{new Date(doc.created_at).toLocaleString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                   )}
 
@@ -901,7 +956,12 @@ const formatFileSize = (bytes) => {
 
                     {/* Date */}
                     <td className="px-6 py-4 text-sm text-gray-500">
-                      {doc.created_at ? utils.formatDate(doc.created_at) : '—'}
+                      {doc.created_at ? (
+                        <span className="flex items-center gap-1">
+                          <Calendar className="w-4 h-4 text-blue-400" />
+                          <span className="font-medium">{new Date(doc.created_at).toLocaleString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        </span>
+                      ) : '—'}
                     </td>
 
                     {/* Actions */}
