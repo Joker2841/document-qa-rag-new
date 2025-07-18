@@ -19,8 +19,16 @@ POPPLER_PATH = os.getenv("POPPLER_PATH", "/usr/bin")
 DOCUMENT_DIR.mkdir(parents=True, exist_ok=True)
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-# Database settings - SQLite by default
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/document_qa.db")
+# Database settings - PostgreSQL by default
+POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "nani:bakka9")
+POSTGRES_SERVER = os.getenv("POSTGRES_SERVER", "localhost")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "document_qa")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_SERVER}:{POSTGRES_PORT}/{POSTGRES_DB}"
+)
 
 # File settings
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB

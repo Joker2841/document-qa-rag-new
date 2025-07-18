@@ -93,13 +93,14 @@ export const useAppStore = create((set, get) => ({
 
   askQuestion: async (question, options = {}) => {
     const { selectedDocuments, queryHistory } = get();
-
+    const selectedDocumentsIds = selectedDocuments.map(doc => `${doc.id}_${doc.filename}`);
     // Don't add placeholder to history, just set loading state
     set({ isLoading: true });
 
     try {
+      
       // Make the actual API call
-      const result = await queryAPI.askQuestion(question, selectedDocuments, options);
+      const result = await queryAPI.askQuestion(question, selectedDocumentsIds, options);
 
       // On success, add the complete item to history
       const historyItem = {

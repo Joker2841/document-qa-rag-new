@@ -3,13 +3,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.engine.url import make_url
 
 from app.config import DATABASE_URL
 
 logger = logging.getLogger(__name__)
 
-# Create database engine
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
+url = make_url(DATABASE_URL)
+if url.drivername.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(DATABASE_URL)
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
