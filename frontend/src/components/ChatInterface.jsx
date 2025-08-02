@@ -1,722 +1,502 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import ReactMarkdown from 'react-markdown';
-import toast from 'react-hot-toast';
-import { useAppStore, useSettingsStore } from '../store/store';
 import { 
   Send, 
   Bot, 
   User, 
-  Clock, 
-  FileText, 
-  Search,
-  Lightbulb,
-  Zap,
-  Copy,
-  ChevronDown,
-  ChevronUp,
-  Sparkles,
-  MessageSquare,
-  Mic,
-  Plus,
-  Filter,
-  MoreHorizontal,
-  CheckCircle,
-  TrendingUp,
+  Sparkles, 
+  Zap, 
+  FileText,
   Brain,
-  Bookmark,
-  AlertCircle
+  MessageSquare,
+  ChevronRight,
+  Loader,
+  CheckCircle,
+  AlertCircle,
+  Clock,
+  Database,
+  Cpu,
+  TrendingUp,
+  BookOpen,
+  Search
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import toast from 'react-hot-toast';
+import { useAppStore } from '../store/store';
 
 const ChatInterface = () => {
   const [input, setInput] = useState('');
-  const [expandedSources, setExpandedSources] = useState({});
-  const [bookmarkedMessages, setBookmarkedMessages] = useState(new Set());
+  const [isTyping, setIsTyping] = useState(false);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState([]);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  
+  // Map store properties to what ChatInterface expects
+  const { 
+    queryHistory,
+    askQuestion,
+    isLoading, 
+    documents,
+    setActiveTab
+  } = useAppStore();
 
-  // Optimized state selectors to prevent unnecessary re-renders
-  const isLoading = useAppStore(state => state.isLoading);
-  const askQuestion = useAppStore(state => state.askQuestion);
-  const queryHistory = useAppStore(state => state.queryHistory);
-  const documents = useAppStore(state => state.documents);
-  const selectedDocuments = useAppStore(state => state.selectedDocuments);
-  const setActiveTab = useAppStore(state => state.setActiveTab);
+  // Transform queryHistory to messages format
+  const messages = useMemo(() => {
+    if (!queryHistory) return [];
+    
+    return queryHistory.flatMap(item => {
+      const userMessage = {
+        id: `${item.id}_user`,
+        role: 'user',
+        content: item.question,
+        timestamp: item.timestamp
+      };
+      
+      const assistantMessage = {
+        id: `${item.id}_assistant`,
+        role: 'assistant',
+        content: item.answer?.answer || 'No response',
+        sources: item.answer?.sources || [],
+        metadata: {
+          response_time: item.answer?.response_time,
+          llm_used: item.llm_used || 'Unknown',
+          context_chunks_count: item.context_chunks_count
+        },
+        timestamp: item.timestamp,
+        error: item.isError
+      };
+      
+      return [userMessage, assistantMessage];
+    });
+  }, [queryHistory]);
 
-  // Settings selectors
-  const maxSources = useSettingsStore(state => state.maxSources);
-  const temperature = useSettingsStore(state => state.temperature);
-  const showSources = useSettingsStore(state => state.showSources);
-  const autoScroll = useSettingsStore(state => state.autoScroll);
-
-  // Memoized computed values
-  const selectedDocs = useMemo(() => 
-    documents.filter(doc => selectedDocuments.includes(doc.id)), 
-    [documents, selectedDocuments]
-  );
-
-  const reversedQueryHistory = useMemo(() => 
-    [...queryHistory].reverse(), 
-    [queryHistory]
-  );
-
-  const sampleQuestions = useMemo(() => [
-    "What are the main topics covered in these documents?",
-    "Can you summarize the key findings?",
-    "What are the recommendations mentioned?",
-    "Explain the methodology used in the research",
-    "What are the limitations discussed?",
-    "How do these findings compare to industry standards?"
-  ], []);
-
-  // Memoized callbacks
-  const scrollToBottom = useCallback(() => {
-    if (autoScroll) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  // Create wrapper functions
+  const sendMessage = async (question, documentIds) => {
+    try {
+      // Pass empty array if no documents selected, which means search all
+      await askQuestion(question, { document_ids: documentIds || [] });
+    } catch (error) {
+      console.error('Error sending message:', error);
+      toast.error('Failed to send message. Please ensure you have documents uploaded.');
     }
-  }, [autoScroll]);
+  };
 
-  const handleSubmit = useCallback(async (e) => {
+  const clearMessages = () => {
+    // Since there's no clear function in the store, we'll just show a toast
+    toast.info('Clear history feature coming soon!');
+  };
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
-    if (selectedDocuments.length === 0) {
-      toast.error('Please select at least one document to ask questions about.');
-      return;
-    }
-
-    const question = input.trim();
+    const userMessage = input.trim();
     setInput('');
-    setCurrentQuestion(question); // Track the question being asked
     
     try {
-      await askQuestion(question, {
-        maxSources,
-        temperature
-      });
+      await sendMessage(userMessage, selectedDocumentIds);
     } catch (error) {
-      console.error('Failed to ask question:', error);
-      toast.error('There was an error processing your question.');
-    } finally {
-      setCurrentQuestion(''); // Clear after processing
+      toast.error('Failed to send message. Please try again.');
     }
-  }, [input, isLoading, selectedDocuments.length, askQuestion, maxSources, temperature]);
+  };
 
-  const handleSampleQuestion = useCallback((question) => {
-    setInput(question);
-    inputRef.current?.focus();
-  }, []);
+  // Suggested questions
+  const suggestedQuestions = [
+    { icon: BookOpen, text: "Summarize the main points from my documents", color: "from-blue-500 to-cyan-500" },
+    { icon: Search, text: "What are the key findings mentioned?", color: "from-purple-500 to-pink-500" },
+    { icon: Brain, text: "Explain the technical concepts in simple terms", color: "from-green-500 to-emerald-500" },
+    { icon: TrendingUp, text: "What trends are highlighted in the data?", color: "from-orange-500 to-red-500" }
+  ];
 
-  const copyToClipboard = useCallback((text) => {
-    navigator.clipboard.writeText(text);
-    toast.success('Copied to clipboard!');
-  }, []);
-
-  const toggleSourceExpansion = useCallback((sourceId) => {
-    setExpandedSources(prev => ({
-      ...prev,
-      [sourceId]: !prev[sourceId]
-    }));
-  }, []);
-  
-  const toggleBookmark = useCallback((messageId) => {
-    setBookmarkedMessages(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(messageId)) {
-        newSet.delete(messageId);
-      } else {
-        newSet.add(messageId);
-      }
-      return newSet;
-    });
-  }, []);
-
-  const handleQuickAction = useCallback((action) => {
-    const template = `${action} the key points from these documents`;
-    setInput(template);
-    inputRef.current?.focus();
-  }, []);
-
-  const handleBrowseDocuments = useCallback(() => {
-    setActiveTab('documents');
-  }, [setActiveTab]);
-
-  // Effects
-  useEffect(() => {
-    scrollToBottom();
-  }, [queryHistory, isLoading, scrollToBottom]);
-
-  // Helper function for similarity score display
-  const formatSimilarityScore = useCallback((score) => {
-    if (score === undefined || score === null) return 'N/A';
-    return `${Math.round(score * 100)}% Match`;
-  }, []);
-
-  const [currentQuestion, setCurrentQuestion] = useState('');
-
-  return (
-    <div className="flex flex-col h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/40">
-      {/* Enhanced Header with Glassmorphism */}
-      <motion.div 
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="backdrop-blur-xl bg-white/80 border-b border-white/20 shadow-lg shadow-blue-500/5"
-      >
-        <div className="max-w-6xl mx-auto p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <motion.div 
-                className="relative p-3 bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 rounded-2xl shadow-lg"
-                whileHover={{ scale: 1.05, rotate: 5 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                <Bot className="w-8 h-8 text-white" aria-hidden="true" />
-                <motion.div
-                  className="absolute -top-1 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-white"
-                  animate={{ scale: [1, 1.2, 1] }}
-                  transition={{ repeat: Infinity, duration: 2 }}
-                />
-              </motion.div>
-              <div>
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-900 via-blue-800 to-indigo-800 bg-clip-text text-transparent">
-                  AI Research Assistant
-                </h1>
-                <p className="text-slate-600 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-500" aria-hidden="true" />
-                  Analyzing {selectedDocs.length} document{selectedDocs.length !== 1 ? 's' : ''} with advanced AI
-                </p>
-              </div>
-            </div>
-            
-            {/* Document Pills */}
-            {selectedDocs.length > 0 && (
-              <motion.div 
-                className="flex items-center gap-2"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-              >
-                <div className="flex -space-x-3">
-                  {selectedDocs.slice(0, 3).map((doc, index) => (
-                    <motion.div
-                      key={doc.id}
-                      className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center border-3 border-white shadow-lg text-white font-bold text-sm"
-                      title={doc.filename}
-                      style={{ zIndex: selectedDocs.length - index }}
-                      whileHover={{ scale: 1.1, zIndex: 10 }}
-                      initial={{ opacity: 0, scale: 0 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: index * 0.1 }}
-                    >
-                      {doc.filename?.charAt(0)?.toUpperCase() || 'D'}
-                    </motion.div>
-                  ))}
-                  {selectedDocs.length > 3 && (
-                    <div className="w-12 h-12 bg-gradient-to-br from-slate-400 to-slate-600 rounded-xl flex items-center justify-center border-3 border-white shadow-lg text-white font-bold text-sm">
-                      +{selectedDocs.length - 3}
-                    </div>
-                  )}
-                </div>
-                <div className="ml-3 text-right">
-                  <div className="text-sm font-semibold text-slate-700">{selectedDocs.length} Active</div>
-                  <div className="text-xs text-slate-500">Documents</div>
-                </div>
-              </motion.div>
-            )}
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Messages Area with Custom Scrollbar */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-8 max-w-6xl mx-auto w-full custom-scrollbar">
-        {/* Welcome Screen */}
-        {queryHistory.length === 0 && !isLoading && (
+  // Typing animation component
+  const TypingIndicator = () => (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      className="flex items-center gap-2 text-gray-400"
+    >
+      <Bot className="w-5 h-5" />
+      <div className="flex gap-1">
+        {[0, 1, 2].map((i) => (
           <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-center py-16"
-          >
-            <motion.div 
-              className="w-24 h-24 bg-gradient-to-br from-blue-100 via-purple-100 to-indigo-100 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-xl"
-              animate={{ 
-                rotate: [0, 5, -5, 0],
-                scale: [1, 1.05, 1]
-              }}
-              transition={{ 
-                rotate: { repeat: Infinity, duration: 4 },
-                scale: { repeat: Infinity, duration: 2 }
-              }}
-            >
-              <Brain className="w-12 h-12 text-blue-600" aria-hidden="true" />
-            </motion.div>
-            
-            <motion.h2 
-              className="text-4xl font-bold bg-gradient-to-r from-slate-800 via-blue-700 to-indigo-700 bg-clip-text text-transparent mb-4"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.2 }}
-            >
-              Ready to Unlock Insights
-            </motion.h2>
-            
-            <motion.p 
-              className="text-slate-600 text-lg mb-12 max-w-2xl mx-auto leading-relaxed"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.4 }}
-            >
-              I'll analyze your documents with advanced AI to provide accurate, sourced answers to your questions
-            </motion.p>
+            key={i}
+            animate={{
+              y: [0, -10, 0],
+            }}
+            transition={{
+              duration: 0.6,
+              repeat: Infinity,
+              delay: i * 0.2,
+            }}
+            className="w-2 h-2 bg-primary-400 rounded-full"
+          />
+        ))}
+      </div>
+      <span className="text-sm">AI is thinking...</span>
+    </motion.div>
+  );
 
-            {/* Enhanced Sample Questions */}
-            {selectedDocs.length > 0 && (
-              <motion.div 
-                className="max-w-4xl mx-auto"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.6 }}
-              >
-                <div className="flex items-center justify-center gap-3 mb-8">
-                  <Lightbulb className="w-5 h-5 text-amber-500" aria-hidden="true" />
-                  <span className="text-slate-700 font-semibold">Suggested Questions</span>
-                </div>
+  // Message component with animations
+  const MessageComponent = ({ message, index }) => {
+    const isUser = message.role === 'user';
+    
+    return (
+      <motion.div
+        initial={{ opacity: 0, x: isUser ? 20 : -20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.3, delay: index * 0.1 }}
+        className={`flex gap-4 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}
+      >
+        {/* Avatar */}
+        <motion.div
+          whileHover={{ scale: 1.1 }}
+          className={`
+            flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center
+            ${isUser 
+              ? 'bg-gradient-to-r from-primary-500 to-purple-500' 
+              : 'bg-gradient-to-r from-green-500 to-emerald-500'
+            }
+            shadow-lg
+          `}
+        >
+          {isUser ? <User className="w-5 h-5 text-white" /> : <Bot className="w-5 h-5 text-white" />}
+        </motion.div>
+        
+        {/* Message Content */}
+        <div className={`flex-1 ${isUser ? 'text-right' : 'text-left'}`}>
+          <motion.div
+            whileHover={{ scale: 1.01 }}
+            className={`
+              inline-block max-w-3xl glass-card rounded-2xl p-4
+              ${isUser ? 'bg-primary-500/10 border-primary-500/20' : ''}
+            `}
+          >
+            {isUser ? (
+              <p className="text-white">{message.content}</p>
+            ) : (
+              <div className="space-y-4">
+               <div className="prose prose-invert max-w-none">
+                <ReactMarkdown 
+                  
+                  components={{
+                    p: ({ children }) => <p className="mb-2 text-gray-200">{children}</p>,
+                    h1: ({ children }) => <h1 className="text-2xl font-bold mb-3 gradient-text">{children}</h1>,
+                    h2: ({ children }) => <h2 className="text-xl font-bold mb-2 text-white">{children}</h2>,
+                    h3: ({ children }) => <h3 className="text-lg font-semibold mb-2 text-white">{children}</h3>,
+                    ul: ({ children }) => <ul className="list-disc list-inside space-y-1 mb-2">{children}</ul>,
+                    ol: ({ children }) => <ol className="list-decimal list-inside space-y-1 mb-2">{children}</ol>,
+                    li: ({ children }) => <li className="text-gray-300">{children}</li>,
+                    code: ({ inline, children }) => 
+                      inline ? (
+                        <code className="bg-white/10 px-1 py-0.5 rounded text-primary-300">{children}</code>
+                      ) : (
+                        <code className="block bg-black/30 p-3 rounded-lg overflow-x-auto text-gray-300">{children}</code>
+                      ),
+                    blockquote: ({ children }) => (
+                      <blockquote className="border-l-4 border-primary-400 pl-4 italic text-gray-400">
+                        {children}
+                      </blockquote>
+                    ),
+                  }}
+                >
+                  {message.content}
+                </ReactMarkdown>
+              </div>
+                {/* Sources */}
+                {message.sources && message.sources.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 }}
+                    className="mt-4 pt-4 border-t border-white/10"
+                  >
+                    <p className="text-sm font-medium text-gray-400 mb-2 flex items-center gap-2">
+                      <FileText className="w-4 h-4" />
+                      Sources:
+                    </p>
+                    <div className="space-y-2">
+                      {message.sources.map((source, idx) => (
+                        <motion.div
+                          key={idx}
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: idx * 0.1 }}
+                          whileHover={{ x: 5 }}
+                          className="flex items-center gap-3 p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-all cursor-pointer"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center text-white text-sm font-bold">
+                            {idx + 1}
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-white">{source.document_name}</p>
+                            <p className="text-xs text-gray-400">
+                              Score: {(source.similarity_score * 100).toFixed(1)}% match
+                            </p>
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-gray-400" />
+                        </motion.div>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
                 
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {sampleQuestions.map((question, index) => (
-                    <motion.button
-                      key={index}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.8 + index * 0.1 }}
-                      onClick={() => handleSampleQuestion(question)}
-                      className="group p-5 text-left bg-white/70 backdrop-blur-sm hover:bg-white/90 rounded-2xl border border-white/50 hover:border-blue-200/50 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1"
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      aria-label={`Ask: ${question}`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                          <MessageSquare className="w-4 h-4 text-white" aria-hidden="true" />
-                        </div>
-                        <p className="text-slate-700 group-hover:text-slate-900 transition-colors font-medium">
-                          {question}
-                        </p>
-                      </div>
-                    </motion.button>
-                  ))}
-                </div>
-              </motion.div>
+                {/* Metadata */}
+                {message.metadata && (
+                  <div className="mt-3 flex items-center gap-4 text-xs text-gray-500">
+                    {message.metadata.llm_used && (
+                      <span className="flex items-center gap-1">
+                        <Cpu className="w-3 h-3" />
+                        {message.metadata.llm_used}
+                      </span>
+                    )}
+                    {message.metadata.response_time && (
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        {message.metadata.response_time.toFixed(2)}s
+                      </span>
+                    )}
+                    {message.metadata.context_chunks_count && (
+                      <span className="flex items-center gap-1">
+                        <Database className="w-3 h-3" />
+                        {message.metadata.context_chunks_count} chunks
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </motion.div>
-        )}
+          
+          {/* Timestamp */}
+          <motion.p 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.5 }}
+            className="text-xs text-gray-500 mt-1 px-2"
+          >
+            {new Date(message.timestamp).toLocaleTimeString()}
+          </motion.p>
+        </div>
+      </motion.div>
+    );
+  };
 
-        {/* Enhanced Query History */}
-        <AnimatePresence mode="wait">
-          {reversedQueryHistory
-            .filter(item => item.question && item.answer && item.answer.answer && item.answer.answer.trim() !== '' && !item.isError)
-            .map((item, index) => (
-              <motion.div
-                key={item.id}
-                initial={{ opacity: 0, y: 30, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -30, scale: 0.95 }}
-                transition={{ duration: 0.4 }}
-                className="space-y-6"
-              >
-                {/* User Question */}
-                <div className="flex gap-4 items-start">
-                  <motion.div 
-                    className="w-10 h-10 bg-gradient-to-r from-slate-600 to-slate-700 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg"
-                    whileHover={{ scale: 1.1, rotate: 5 }}
-                  >
-                    <User className="w-5 h-5 text-white" aria-hidden="true" />
-                  </motion.div>
-                  <motion.div 
-                    className="flex-1 max-w-4xl"
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.1 }}
-                  >
-                    <div className="bg-gradient-to-r from-slate-50 to-blue-50/50 rounded-2xl p-6 border border-slate-200/50 shadow-md">
-                      <p className="text-slate-800 font-medium text-lg leading-relaxed">{item.question}</p>
-                      <div className="flex items-center gap-2 mt-4 text-sm text-slate-500">
-                        <Clock className="w-4 h-4" aria-hidden="true" />
-                        <span>{new Date(item.timestamp).toLocaleTimeString()}</span>
-                      </div>
-                    </div>
-                  </motion.div>
-                </div>
-
-                {/* AI Answer */}
-                <div className="flex gap-4 items-start">
-                  <motion.div 
-                    className="relative w-10 h-10 bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg"
-                    whileHover={{ scale: 1.1, rotate: -5 }}
-                  >
-                    <Bot className="w-5 h-5 text-white" aria-hidden="true" />
-                  </motion.div>
-                  <motion.div 
-                    className="flex-1 max-w-4xl"
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.2 }}
-                  >
-                    <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 border border-white/50 shadow-xl">
-                      <div className="prose prose-slate max-w-none text-slate-800 leading-relaxed">
-                        <ReactMarkdown
-                          components={{
-                            strong: ({node, ...props}) => <strong className="font-semibold text-slate-900 bg-blue-50 px-1 rounded" {...props} />,
-                            p: ({node, ...props}) => <p className="mb-4 last:mb-0" {...props} />,
-                          }}
-                        >
-                          {item.answer.answer}
-                        </ReactMarkdown>
-                      </div>
-
-                      {/* Enhanced Sources Section */}
-                      {showSources && item.answer.sources && item.answer.sources.length > 0 && (
-                        <motion.div 
-                          className="mt-6 pt-6 border-t border-slate-200"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          transition={{ delay: 0.4 }}
-                        >
-                          <div className="flex items-center gap-3 mb-4">
-                            <div className="p-2 bg-gradient-to-r from-emerald-500 to-teal-500 rounded-lg">
-                              <FileText className="w-4 h-4 text-white" aria-hidden="true" />
-                            </div>
-                            <h4 className="font-semibold text-slate-800">
-                              Sources ({item.answer.sources.length})
-                            </h4>
-                            <div className="flex-1 h-px bg-gradient-to-r from-slate-200 to-transparent" />
-                          </div>
-                          
-                          <div className="space-y-3">
-                            {item.answer.sources.map((source, sourceIndex) => {
-                              const sourceId = `${item.id}-${sourceIndex}`;
-                              return (
-                                <motion.div 
-                                  key={sourceId}
-                                  className="bg-gradient-to-r from-slate-50 to-blue-50/30 rounded-xl p-4 border border-slate-200/50"
-                                  whileHover={{ scale: 1.01 }}
-                                >
-                                  <div className="flex items-center justify-between mb-3">
-                                    <div className="flex items-center gap-3">
-                                      <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-lg flex items-center justify-center">
-                                        <span className="text-white text-xs font-bold">
-                                          {source.document_name?.charAt(0) || 'D'}
-                                        </span>
-                                      </div>
-                                      <span className="font-medium text-slate-800 truncate">
-                                        {source.document_name}
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <div className="px-3 py-1 bg-gradient-to-r from-emerald-100 to-teal-100 rounded-full text-xs font-semibold text-emerald-700">
-                                        {formatSimilarityScore(source.similarity_score)}
-                                      </div>
-                                      <motion.button
-                                        onClick={() => toggleSourceExpansion(sourceId)}
-                                        className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
-                                        whileHover={{ scale: 1.1 }}
-                                        whileTap={{ scale: 0.9 }}
-                                        aria-label={expandedSources[sourceId] ? 'Collapse source' : 'Expand source'}
-                                      >
-                                        {expandedSources[sourceId] ? (
-                                          <ChevronUp className="w-4 h-4" aria-hidden="true" />
-                                        ) : (
-                                          <ChevronDown className="w-4 h-4" aria-hidden="true" />
-                                        )}
-                                      </motion.button>
-                                    </div>
-                                  </div>
-                                  
-                                  <AnimatePresence>
-                                    {expandedSources[sourceId] && (
-                                      <motion.div
-                                        initial={{ opacity: 0, height: 0 }}
-                                        animate={{ opacity: 1, height: 'auto' }}
-                                        exit={{ opacity: 0, height: 0 }}
-                                        className="text-slate-600 border-t border-slate-200 pt-3 mt-3 bg-white/50 rounded-lg p-3"
-                                      >
-                                        <p className="whitespace-pre-wrap leading-relaxed">{source.content}</p>
-                                      </motion.div>
-                                    )}
-                                  </AnimatePresence>
-                                </motion.div>
-                              );
-                            })}
-                          </div>
-                        </motion.div>
-                      )}
-
-                      {/* Enhanced Action Buttons */}
-                      <motion.div 
-                        className="flex items-center justify-between mt-6 pt-4 border-t border-slate-200"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 0.6 }}
-                      >
-                        <div className="flex items-center gap-3">
-                          <motion.button
-                            onClick={() => copyToClipboard(item.answer.answer)}
-                            className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                            whileHover={{ scale: 1.05 }}
-                            whileTap={{ scale: 0.95 }}
-                            aria-label="Copy answer to clipboard"
-                          >
-                            <Copy className="w-4 h-4" aria-hidden="true" />
-                            Copy
-                          </motion.button>
-                          <motion.button
-                            onClick={() => toggleBookmark(item.id)}
-                            className={`flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors ${
-                              bookmarkedMessages.has(item.id)
-                                ? 'text-amber-600 bg-amber-100 hover:bg-amber-200'
-                                : 'text-slate-600 hover:text-amber-600 bg-slate-100 hover:bg-amber-100'
-                            }`}
-                            whileHover={{ scale: 1.05 }}
-                            whileTap={{ scale: 0.95 }}
-                            aria-label={bookmarkedMessages.has(item.id) ? 'Remove from bookmarks' : 'Add to bookmarks'}
-                          >
-                            <Bookmark className={`w-4 h-4 ${bookmarkedMessages.has(item.id) ? 'fill-current' : ''}`} aria-hidden="true" />
-                            {bookmarkedMessages.has(item.id) ? 'Saved' : 'Save'}
-                          </motion.button>
-                        </div>
-                        <div className="flex items-center gap-3 text-sm text-slate-500">
-                          <div className="flex items-center gap-1">
-                            <Zap className="w-4 h-4 text-emerald-500" aria-hidden="true" />
-                            <span>{item.answer.response_time?.toFixed(1) || '...'}s</span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <CheckCircle className="w-4 h-4 text-blue-500" aria-hidden="true" />
-                            <span>Verified</span>
-                          </div>
-                        </div>
-                      </motion.div>
-                    </div>
-                  </motion.div>
-                </div>
-              </motion.div>
-            ))}
-        </AnimatePresence>
-
-        {/* Error Messages */}
-        <AnimatePresence>
-          {reversedQueryHistory
-            .filter(item => item.isError)
-            .map((item) => (
-              <motion.div
-                key={item.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                className="max-w-4xl mx-auto"
-              >
-                <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
-                  <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <AlertCircle className="w-5 h-5 text-red-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-red-900 mb-1">Error processing question</h4>
-                    <p className="text-red-700 text-sm">{item.question}</p>
-                    <p className="text-red-600 text-sm mt-2">Please try again or check your connection.</p>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-        </AnimatePresence>
-
-        {/* Loading State */}
-        <AnimatePresence>
-          {isLoading && currentQuestion && (
-            <motion.div
-              initial={{ opacity: 0, y: 30 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -30 }}
-              className="space-y-6"
-            >
-              {/* Show the question being processed */}
-              <div className="flex gap-4 items-start">
-                <div className="w-10 h-10 bg-gradient-to-r from-slate-600 to-slate-700 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg">
-                  <User className="w-5 h-5 text-white" aria-hidden="true" />
-                </div>
-                <div className="flex-1 max-w-4xl">
-                  <div className="bg-gradient-to-r from-slate-50 to-blue-50/50 rounded-2xl p-6 border border-slate-200/50 shadow-md">
-                    <p className="text-slate-800 font-medium text-lg leading-relaxed">{currentQuestion}</p>
-                    <div className="flex items-center gap-2 mt-4 text-sm text-slate-500">
-                      <Clock className="w-4 h-4" aria-hidden="true" />
-                      <span>Just now</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* AI Processing Animation */}
-              <div className="flex gap-4 items-start">
-                <div className="w-10 h-10 bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
-                  <Bot className="w-5 h-5 text-white" aria-hidden="true" />
-                </div>
-                <div className="flex-1 max-w-4xl">
-                  <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 border border-white/50 shadow-xl">
-                    <div className="flex items-center gap-4">
-                      <div className="flex space-x-2">
-                        {[0, 1, 2].map((i) => (
-                          <motion.div
-                            key={i}
-                            className="w-3 h-3 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"
-                            animate={{ 
-                              scale: [1, 1.5, 1],
-                              opacity: [0.5, 1, 0.5]
-                            }}
-                            transition={{ 
-                              repeat: Infinity, 
-                              duration: 1.5,
-                              delay: i * 0.2
-                            }}
-                          />
-                        ))}
-                      </div>
-                      <span className="text-slate-600 font-medium">Analyzing documents and generating response...</span>
-                    </div>
-                    <div className="mt-4">
-                      <div className="flex items-center gap-2 text-sm text-slate-500">
-                        <Brain className="w-4 h-4" aria-hidden="true" />
-                        <span>Processing with advanced AI models</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Enhanced Input Area */}
-      <motion.div 
-        className="backdrop-blur-xl bg-white/80 border-t border-white/20 shadow-lg shadow-blue-500/5"
-        initial={{ opacity: 0, y: 20 }}
+  return (
+    <div className="flex flex-col h-[calc(100vh-8rem)] max-w-6xl mx-auto">
+      {/* Header */}
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
+        className="glass-card rounded-2xl p-4 mb-4"
       >
-        <div className="max-w-6xl mx-auto p-6">
-          {selectedDocuments.length === 0 ? (
-            <motion.div 
-              className="text-center py-8"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Brain className="w-8 h-8 text-primary-400" />
+              <motion.div
+                animate={{
+                  scale: [1, 1.2, 1],
+                  opacity: [0.5, 0.8, 0.5],
+                }}
+                transition={{
+                  duration: 2,
+                  repeat: Infinity,
+                }}
+                className="absolute inset-0 bg-primary-400/30 rounded-full blur-xl"
+              />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold">AI Assistant</h2>
+              <p className="text-sm text-gray-400 flex items-center gap-1">
+                <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                Ready to help with your documents
+              </p>
+            </div>
+          </div>
+          
+          {/* Document selector */}
+          {documents && documents.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-400">Search in:</span>
+              <select
+                className="bg-white/10 border border-white/20 rounded-lg px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSelectedDocumentIds(value === 'all' ? [] : [value]);
+                }}
+              >
+                <option value="all">All documents</option>
+                {documents.map(doc => (
+                  <option key={doc.id} value={doc.id}>{doc.filename}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {messages && messages.length > 0 && (
+            <button
+              onClick={clearMessages}
+              className="text-sm text-gray-400 hover:text-white transition-colors"
             >
-              <div className="mb-4">
-                <div className="w-16 h-16 bg-gradient-to-r from-slate-200 to-slate-300 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                  <Search className="w-8 h-8 text-slate-500" aria-hidden="true" />
-                </div>
-                <p className="text-slate-600 text-lg font-medium mb-4">Select documents to start asking questions</p>
-                <motion.button
-                  onClick={handleBrowseDocuments}
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-300"
-                  whileHover={{ scale: 1.05, y: -2 }}
-                  whileTap={{ scale: 0.95 }}
-                  aria-label="Browse and select documents"
-                >
-                  <Plus className="w-5 h-5" aria-hidden="true" />
-                  Browse Documents
-                </motion.button>
-              </div>
-            </motion.div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="flex gap-4 items-end">
-                <div className="flex-1 relative">
-                  <motion.input
-                    ref={inputRef}
-                    type="text"
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="Ask me anything about your documents..."
-                    className="w-full px-6 py-4 pr-32 bg-white/90 backdrop-blur-sm border border-white/50 rounded-2xl shadow-lg focus:ring-4 focus:ring-blue-500/20 focus:border-blue-400 outline-none transition-all duration-300 text-lg placeholder-slate-400"
-                    disabled={isLoading}
-                    whileFocus={{ scale: 1.02 }}
-                    aria-label="Ask a question about your documents"
-                  />
-                  <div className="absolute right-4 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
-                    <motion.button
-                      type="button"
-                      className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
-                      whileHover={{ scale: 1.1 }}
-                      whileTap={{ scale: 0.9 }}
-                      aria-label="Voice input (coming soon)"
-                      disabled
-                    >
-                      <Mic className="w-5 h-5" aria-hidden="true" />
-                    </motion.button>
-                    <div className="w-px h-6 bg-slate-300" />
-                    <motion.button
-                      type="submit"
-                      disabled={!input.trim() || isLoading}
-                      className="p-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
-                      whileHover={{ scale: 1.1 }}
-                      whileTap={{ scale: 0.9 }}
-                      aria-label="Send question"
-                    >
-                      <Send className="w-5 h-5" aria-hidden="true" />
-                    </motion.button>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Quick Actions */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="text-sm text-slate-500">Quick actions:</span>
-                  <div className="flex gap-2">
-                    {['Summarize', 'Compare', 'Analyze'].map((action) => (
-                      <motion.button
-                        key={action}
-                        type="button"
-                        onClick={() => handleQuickAction(action)}
-                        className="px-3 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors"
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.95 }}
-                        aria-label={`Quick action: ${action}`}
-                      >
-                        {action}
-                      </motion.button>
-                    ))}
-                  </div>
-                </div>
-                
-                <div className="flex items-center gap-2 text-sm text-slate-500">
-                  <div className="flex items-center gap-1">
-                    <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                    <span>AI Ready</span>
-                  </div>
-                  <div className="w-px h-4 bg-slate-300" />
-                  <span>{selectedDocs.length} docs active</span>
-                </div>
-              </div>
-            </form>
+              Clear chat
+            </button>
           )}
         </div>
       </motion.div>
 
-      {/* Custom Styles */}
-      <style jsx>{`
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 8px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: rgba(148, 163, 184, 0.1);
-          border-radius: 4px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: linear-gradient(to bottom, #3b82f6, #8b5cf6);
-          border-radius: 4px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: linear-gradient(to bottom, #2563eb, #7c3aed);
-        }
-      `}</style>
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto space-y-4 mb-4 pr-2">
+        {messages.length === 0 ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="h-full flex flex-col items-center justify-center text-center"
+          >
+            <motion.div
+              animate={{ y: [0, -10, 0] }}
+              transition={{ duration: 3, repeat: Infinity }}
+              className="mb-8"
+            >
+              <MessageSquare className="w-20 h-20 text-primary-400/50 mx-auto" />
+            </motion.div>
+            
+            <h3 className="text-2xl font-bold gradient-text mb-4">
+              Start a Conversation
+            </h3>
+            <p className="text-gray-400 mb-8 max-w-md">
+              Ask questions about your documents and get intelligent answers powered by advanced RAG technology
+            </p>
+            
+            {/* Suggested Questions */}
+            <div className="grid grid-cols-2 gap-3 max-w-2xl">
+              {suggestedQuestions.map((question, idx) => {
+                const Icon = question.icon;
+                return (
+                  <motion.button
+                    key={idx}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => setInput(question.text)}
+                    className="glass-card rounded-xl p-4 text-left hover:bg-white/10 transition-all group"
+                  >
+                    <div className={`
+                      w-10 h-10 rounded-lg bg-gradient-to-r ${question.color}
+                      flex items-center justify-center mb-3 group-hover:scale-110 transition-transform
+                    `}>
+                      <Icon className="w-5 h-5 text-white" />
+                    </div>
+                    <p className="text-sm text-gray-300">{question.text}</p>
+                  </motion.button>
+                );
+              })}
+            </div>
+          </motion.div>
+        ) : (
+          <>
+            {messages.map((message, index) => (
+              <MessageComponent key={message.id} message={message} index={index} />
+            ))}
+            
+            <AnimatePresence>
+              {isLoading && <TypingIndicator />}
+            </AnimatePresence>
+            
+            <div ref={messagesEndRef} />
+          </>
+        )}
+      </div>
+
+      {/* Input Area */}
+      <motion.form
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        onSubmit={handleSubmit}
+        className="glass-card rounded-2xl p-4"
+      >
+        <div className="flex items-end gap-3">
+          <div className="flex-1">
+            <div className="relative">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit(e);
+                  }
+                }}
+                placeholder="Ask a question about your documents..."
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl 
+                         text-white placeholder-gray-400 resize-none
+                         focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent
+                         transition-all duration-300"
+                rows={1}
+                style={{
+                  minHeight: '48px',
+                  maxHeight: '120px',
+                }}
+                onInput={(e) => {
+                  e.target.style.height = 'auto';
+                  e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+                }}
+              />
+              
+              {/* Character count */}
+              {input.length > 0 && (
+                <span className="absolute bottom-2 right-2 text-xs text-gray-500">
+                  {input.length} / 1000
+                </span>
+              )}
+            </div>
+            
+            {/* Quick actions */}
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-xs text-gray-500">Press Enter to send</span>
+              {documents.length === 0 && (
+                <span className="text-xs text-yellow-400 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" />
+                  No documents uploaded yet
+                </span>
+              )}
+            </div>
+          </div>
+          
+          <motion.button
+            type="submit"
+            disabled={!input.trim() || isLoading}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className={`
+              p-3 rounded-xl font-semibold text-white
+              bg-gradient-to-r from-primary-500 to-purple-500
+              hover:from-primary-600 hover:to-purple-600
+              disabled:opacity-50 disabled:cursor-not-allowed
+              transition-all duration-300 
+              shadow-lg hover:shadow-xl hover:shadow-primary-500/25
+              flex items-center gap-2
+            `}
+          >
+            {isLoading ? (
+              <Loader className="w-5 h-5 animate-spin" />
+            ) : (
+              <>
+                <Send className="w-5 h-5" />
+                <Sparkles className="w-4 h-4" />
+              </>
+            )}
+          </motion.button>
+        </div>
+      </motion.form>
     </div>
   );
 };

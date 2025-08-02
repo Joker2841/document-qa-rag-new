@@ -1,109 +1,73 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Toaster } from 'react-hot-toast';
 import { 
-  Menu, 
-  X, 
   Upload, 
   MessageSquare, 
   FileText, 
-  BarChart3,
-  Settings,
-  Zap,
+  BarChart3, 
+  Menu, 
+  X, 
   Brain,
-  Search
+  Sparkles,
+  Zap,
+  Database,
+  Cpu
 } from 'lucide-react';
-
-import { useAppStore } from './store/store';
+import { Toaster } from 'react-hot-toast';
 import DocumentUpload from './components/DocumentUpload';
 import ChatInterface from './components/ChatInterface';
 import DocumentList from './components/DocumentList';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
-import SettingsPanel from './components/SettingsPanel';
-import LoadingScreen from './components/LoadingScreen';
+import { useAppStore } from './store/store';
 
-console.log("App rendered")
-const App = () => {
-//   const [isInitialized, setIsInitialized] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  
-  const {
-    activeTab,
-    setActiveTab,
-    sidebarOpen,
-    toggleSidebar,
-    setSidebarOpen,
-    initialize,
-    documents,
-    selectedDocuments,
-    currentAnswer,
-    isLoading,
-    isInitialized
-  } = useAppStore();
+function App() {
+  const [activeTab, setActiveTab] = useState('upload');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const { documents } = useAppStore();
 
-  // Initialize the app
-  useEffect(() => {
-  initialize();
-}, [initialize]);
-
-
-  // Close sidebar on mobile when tab changes
-  useEffect(() => {
-    if (window.innerWidth < 768) {
-      setSidebarOpen(false);
-    }
-  }, [activeTab, setSidebarOpen]);
-
-  // Handle window resize
-  useEffect(() => {
-    const handleResize = () => {
-      if (window.innerWidth >= 768) {
-        setSidebarOpen(true);
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [setSidebarOpen]);
-
-  if (!isInitialized) {
-    return <LoadingScreen />;
-  }
+  // Animated background elements
+  const BackgroundElements = () => (
+    <div className="fixed inset-0 overflow-hidden pointer-events-none">
+      <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
+      <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000"></div>
+      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-primary-500 rounded-full mix-blend-multiply filter blur-xl opacity-10 animate-blob animation-delay-4000"></div>
+    </div>
+  );
 
   const navItems = [
     {
       id: 'upload',
       label: 'Upload',
       icon: Upload,
-      color: 'text-blue-600',
-      bgColor: 'bg-blue-50',
-      description: 'Add new documents'
+      color: 'from-blue-500 to-cyan-500',
+      description: 'Add new documents',
+      glow: 'hover:shadow-blue-500/25'
     },
     {
       id: 'chat',
-      label: 'Ask Questions',
+      label: 'Chat',
       icon: MessageSquare,
-      color: 'text-green-600',
-      bgColor: 'bg-green-50',
-      description: 'Chat with your documents',
-      disabled: documents.length === 0
+      color: 'from-green-500 to-emerald-500',
+      description: 'Ask questions',
+      disabled: documents.length === 0,
+      glow: 'hover:shadow-green-500/25'
     },
     {
       id: 'documents',
       label: 'Documents',
       icon: FileText,
-      color: 'text-purple-600',
-      bgColor: 'bg-purple-50',
-      description: 'Manage your files',
-      badge: documents.length
+      color: 'from-purple-500 to-pink-500',
+      description: 'Manage files',
+      badge: documents.length,
+      glow: 'hover:shadow-purple-500/25'
     },
     {
       id: 'analytics',
       label: 'Analytics',
       icon: BarChart3,
-      color: 'text-orange-600',
-      bgColor: 'bg-orange-50',
-      description: 'Usage insights'
+      color: 'from-orange-500 to-red-500',
+      description: 'View insights',
+      glow: 'hover:shadow-orange-500/25'
     }
   ];
 
@@ -123,228 +87,236 @@ const App = () => {
   };
 
   return (
-    <div className="h-screen bg-gray-50 flex overflow-hidden">
-      {/* Sidebar */}
-      <AnimatePresence>
-        {sidebarOpen && (
-          <>
-            {/* Mobile overlay */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
-              onClick={() => setSidebarOpen(false)}
-            />
-            
-            {/* Sidebar content */}
-            <motion.div
-              initial={{ x: -320 }}
-              animate={{ x: 0 }}
-              exit={{ x: -320 }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="fixed md:relative z-50 w-80 h-full bg-white shadow-xl flex flex-col"
-            >
-              {/* Header */}
-              <div className="p-6 border-b border-gray-200">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-purple-600 rounded-xl flex items-center justify-center">
-                      <Brain className="w-6 h-6 text-white" />
-                    </div>
-                    <div>
-                      <h1 className="text-xl font-bold text-gray-900">DocuMind</h1>
-                      <p className="text-sm text-gray-500">AI Document Q&A</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setSidebarOpen(false)}
-                    className="md:hidden p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                {/* Quick Stats */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-gradient-to-r from-blue-50 to-cyan-50 p-3 rounded-lg">
-                    <div className="text-2xl font-bold text-blue-600">{documents.length}</div>
-                    <div className="text-xs text-blue-600">Documents</div>
-                  </div>
-                  <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-3 rounded-lg">
-                    <div className="text-2xl font-bold text-green-600">{selectedDocuments.length}</div>
-                    <div className="text-xs text-green-600">Selected</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Navigation */}
-              <nav className="flex-1 p-4 space-y-2">
-                {navItems.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = activeTab === item.id;
-                  const isDisabled = item.disabled;
-
-                  return (
-                    <motion.button
-                      key={item.id}
-                      onClick={() => !isDisabled && setActiveTab(item.id)}
-                      disabled={isDisabled}
-                      whileHover={!isDisabled ? { scale: 1.02 } : {}}
-                      whileTap={!isDisabled ? { scale: 0.98 } : {}}
-                      className={`
-                        w-full flex items-center gap-3 p-4 rounded-xl transition-all duration-200
-                        ${isActive
-                          ? `${item.bgColor} ${item.color} shadow-md`
-                          : isDisabled
-                          ? 'text-gray-400 cursor-not-allowed'
-                          : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                        }
-                      `}
-                    >
-                      <Icon className="w-5 h-5 flex-shrink-0" />
-                      <div className="flex-1 text-left">
-                        <div className="font-medium">{item.label}</div>
-                        <div className="text-xs opacity-75">{item.description}</div>
+    <div className="min-h-screen bg-dark-bg text-dark-text overflow-hidden">
+      <BackgroundElements />
+      
+      <div className="relative z-10 flex h-screen">
+        {/* Sidebar */}
+        <AnimatePresence>
+          {sidebarOpen && (
+            <>
+              {/* Mobile overlay */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 bg-black/50 z-40 md:hidden"
+                onClick={() => setSidebarOpen(false)}
+              />
+              
+              {/* Sidebar content */}
+              <motion.div
+                initial={{ x: -320 }}
+                animate={{ x: 0 }}
+                exit={{ x: -320 }}
+                transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                className="fixed md:relative z-50 w-80 h-full glass-morphism border-r border-white/10 flex flex-col"
+              >
+                {/* Header */}
+                <div className="p-6 border-b border-white/10">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+                        className="relative"
+                      >
+                        <Brain className="w-10 h-10 text-primary-400" />
+                        <div className="absolute inset-0 blur-md bg-primary-400/50"></div>
+                      </motion.div>
+                      <div>
+                        <h1 className="text-2xl font-bold font-display gradient-text">
+                          DocuMind AI
+                        </h1>
+                        <p className="text-xs text-gray-400">Intelligent Document Assistant</p>
                       </div>
-                      {item.badge !== undefined && (
-                        <span className={`
-                          px-2 py-1 text-xs font-medium rounded-full
-                          ${isActive 
-                            ? 'bg-white bg-opacity-50' 
-                            : 'bg-gray-200 text-gray-600'
-                          }
-                        `}>
-                          {item.badge}
-                        </span>
-                      )}
-                    </motion.button>
-                  );
-                })}
-              </nav>
-
-              {/* Footer */}
-              <div className="p-4 border-t border-gray-200">
-                <button
-                  onClick={() => setShowSettings(true)}
-                  className="w-full flex items-center gap-3 p-3 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
-                >
-                  <Settings className="w-5 h-5" />
-                  <span>Settings</span>
-                </button>
-                
-                <div className="mt-3 p-3 bg-gradient-to-r from-primary-50 to-purple-50 rounded-lg">
-                  <div className="flex items-center gap-2 text-primary-700 text-sm font-medium">
-                    <Zap className="w-4 h-4" />
-                    <span>GPU Accelerated</span>
+                    </div>
+                    <button
+                      onClick={() => setSidebarOpen(false)}
+                      className="md:hidden p-2 hover:bg-white/10 rounded-lg transition-colors"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
                   </div>
-                  <div className="text-xs text-primary-600 mt-1">
-                    RTX 4050 Ready
+                  
+                  {/* System Status */}
+                  <div className="grid grid-cols-2 gap-2 mt-4">
+                    <div className="glass-morphism rounded-lg p-2 text-center">
+                      <div className="flex items-center justify-center gap-1 text-green-400 mb-1">
+                        <Zap className="w-3 h-3" />
+                        <span className="text-xs font-medium">GPU Active</span>
+                      </div>
+                      <p className="text-xs text-gray-400">RTX 4050</p>
+                    </div>
+                    <div className="glass-morphism rounded-lg p-2 text-center">
+                      <div className="flex items-center justify-center gap-1 text-blue-400 mb-1">
+                        <Database className="w-3 h-3" />
+                        <span className="text-xs font-medium">Vector DB</span>
+                      </div>
+                      <p className="text-xs text-gray-400">
+                        {documents.reduce((acc, doc) => acc + (doc.chunks_created || 0), 0)} chunks
+                      </p>
+                    </div>
                   </div>
                 </div>
+
+                {/* Navigation */}
+                <nav className="flex-1 p-4">
+                  <ul className="space-y-2">
+                    {navItems.map((item) => {
+                      const Icon = item.icon;
+                      const isActive = activeTab === item.id;
+                      const isDisabled = item.disabled;
+                      
+                      return (
+                        <motion.li key={item.id}>
+                          <button
+                            onClick={() => !isDisabled && setActiveTab(item.id)}
+                            disabled={isDisabled}
+                            className={`
+                              w-full group relative overflow-hidden rounded-xl p-4 
+                              transition-all duration-300 text-left
+                              ${isActive 
+                                ? 'glass-morphism border border-white/20' 
+                                : 'hover:bg-white/5'
+                              }
+                              ${isDisabled 
+                                ? 'opacity-50 cursor-not-allowed' 
+                                : `cursor-pointer ${item.glow} hover:shadow-lg`
+                              }
+                            `}
+                          >
+                            {/* Gradient background on active */}
+                            {isActive && (
+                              <motion.div
+                                layoutId="activeTab"
+                                className={`absolute inset-0 bg-gradient-to-r ${item.color} opacity-10`}
+                                transition={{ type: "spring", damping: 20, stiffness: 200 }}
+                              />
+                            )}
+                            
+                            <div className="relative z-10 flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className={`
+                                  p-2 rounded-lg bg-gradient-to-r ${item.color}
+                                  ${isActive ? 'shadow-lg' : 'group-hover:shadow-lg'}
+                                  transition-shadow duration-300
+                                `}>
+                                  <Icon className="w-5 h-5 text-white" />
+                                </div>
+                                <div>
+                                  <h3 className={`font-semibold ${isActive ? 'text-white' : 'text-gray-300'}`}>
+                                    {item.label}
+                                  </h3>
+                                  <p className="text-xs text-gray-500">{item.description}</p>
+                                </div>
+                              </div>
+                              {item.badge !== undefined && (
+                                <span className="px-2 py-1 text-xs font-bold bg-white/10 rounded-full">
+                                  {item.badge}
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        </motion.li>
+                      );
+                    })}
+                  </ul>
+                </nav>
+
+                {/* Footer */}
+                <div className="p-4 border-t border-white/10">
+                  <div className="glass-morphism rounded-lg p-3 text-center">
+                    <div className="flex items-center justify-center gap-2 mb-1">
+                      <Sparkles className="w-4 h-4 text-yellow-400" />
+                      <span className="text-sm font-medium">Pro Tip</span>
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      Upload multiple documents to build a comprehensive knowledge base
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col">
+          {/* Top Bar */}
+          <header className="glass-morphism border-b border-white/10 px-6 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={() => setSidebarOpen(!sidebarOpen)}
+                  className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                >
+                  <Menu className="w-5 h-5" />
+                </button>
+                <h2 className="text-xl font-semibold font-display">
+                  {navItems.find(item => item.id === activeTab)?.label}
+                </h2>
               </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Top Bar */}
-        <div className="bg-white border-b border-gray-200 p-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={toggleSidebar}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-            
-            <div className="hidden sm:block">
-              <h2 className="text-lg font-semibold text-gray-900">
-                {navItems.find(item => item.id === activeTab)?.label || 'Dashboard'}
-              </h2>
-              <p className="text-sm text-gray-500">
-                {navItems.find(item => item.id === activeTab)?.description}
-              </p>
+              
+              {/* Performance Metrics Preview */}
+              <div className="hidden md:flex items-center gap-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <Cpu className="w-4 h-4 text-green-400" />
+                  <span className="text-gray-400">GPU: Active</span>
+                </div>
+                <div className="flex items-center gap-2 text-sm">
+                  <Zap className="w-4 h-4 text-yellow-400" />
+                  <span className="text-gray-400">Speed: 0.3s avg</span>
+                </div>
+              </div>
             </div>
-          </div>
+          </header>
 
-          {/* Status Indicators */}
-          <div className="flex items-center gap-3">
-            {isLoading && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="flex items-center gap-2 px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm"
-              >
-                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                Processing...
-              </motion.div>
-            )}
-            
-            {currentAnswer && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="flex items-center gap-2 px-3 py-1 bg-green-50 text-green-700 rounded-full text-sm"
-              >
-                <Search className="w-4 h-4" />
-                Answer Ready
-              </motion.div>
-            )}
-          </div>
-        </div>
-
-        {/* Content Area */}
-        <div className="flex-1 overflow-auto">
-          <motion.div
-            key={activeTab}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.3 }}
-            className="h-full"
-          >
-            {renderContent()}
-          </motion.div>
+          {/* Content Area */}
+          <main className="flex-1 overflow-auto">
+            <div className="p-6">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={activeTab}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  {renderContent()}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+          </main>
         </div>
       </div>
-      
-      {/* Settings Modal */}
-      <AnimatePresence>
-        {showSettings && (
-          <SettingsPanel isOpen={showSettings} onClose={() => setShowSettings(false)} />
-        )}
-      </AnimatePresence>
 
-      {/* Toast Notifications */}
+      {/* Toast Container */}
       <Toaster
-        position="top-right"
+        position="bottom-right"
         toastOptions={{
-          duration: 4000,
+          className: 'glass-morphism',
           style: {
-            background: '#fff',
-            color: '#374151',
-            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.15)',
-            border: '1px solid #e5e7eb',
+            background: 'rgba(255, 255, 255, 0.05)',
+            color: '#e2e8f0',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
           },
           success: {
             iconTheme: {
               primary: '#10b981',
-              secondary: '#fff',
+              secondary: '#e2e8f0',
             },
           },
           error: {
             iconTheme: {
               primary: '#ef4444',
-              secondary: '#fff',
+              secondary: '#e2e8f0',
             },
           },
         }}
       />
     </div>
   );
-};
+}
 
 export default App;

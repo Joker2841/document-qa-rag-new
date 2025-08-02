@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -8,8 +8,13 @@ import {
   X, 
   CheckCircle, 
   AlertCircle,
-  Download,
-  Zap
+  Sparkles,
+  Zap,
+  Cloud,
+  HardDrive,
+  FileCode,
+  Loader,
+  ChevronRight
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAppStore } from '../store/store';
@@ -17,7 +22,8 @@ import { utils } from '../services/api';
 
 const DocumentUpload = () => {
   const [files, setFiles] = useState([]);
-  const [dragActive, setDragActive] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const fileInputRef = useRef(null);
   
   const { 
     uploadDocuments, 
@@ -47,8 +53,9 @@ const DocumentUpload = () => {
         validFiles.push({
           file,
           id: Math.random().toString(36).substr(2, 9),
-          preview: URL.createObjectURL(file),
-          status: 'pending'
+          preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+          status: 'pending',
+          progress: 0
         });
       } catch (error) {
         toast.error(error.message);
@@ -56,9 +63,16 @@ const DocumentUpload = () => {
     });
 
     setFiles(prev => [...prev, ...validFiles]);
+    
+    // Auto-upload if enabled
+    if (validFiles.length > 0) {
+      toast.success(`${validFiles.length} file${validFiles.length > 1 ? 's' : ''} ready to upload`, {
+        icon: '📁',
+      });
+    }
   }, []);
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
     onDrop,
     accept: {
       'application/pdf': ['.pdf'],
@@ -69,13 +83,12 @@ const DocumentUpload = () => {
       'text/markdown': ['.md']
     },
     maxSize: 50 * 1024 * 1024, // 50MB
-    multiple: true,
-    onDragEnter: () => setDragActive(true),
-    onDragLeave: () => setDragActive(false),
+    multiple: true
   });
 
   const removeFile = (id) => {
     setFiles(prev => prev.filter(f => f.id !== id));
+    toast.success('File removed', { icon: '🗑️' });
   };
 
   const handleUpload = async () => {
@@ -84,295 +97,372 @@ const DocumentUpload = () => {
       return;
     }
 
+    setIsProcessing(true);
+    const toastId = toast.loading('Initializing upload...');
+
     try {
+      // Update file statuses to uploading
+      setFiles(prev => prev.map(f => ({ ...f, status: 'uploading', progress: 0 })));
+
       const filesToUpload = files.map(f => f.file);
       await uploadDocuments(filesToUpload);
       
-      // Mark files as uploaded
-      setFiles(prev => prev.map(f => ({ ...f, status: 'uploaded' })));
+      // Update file statuses to completed
+      setFiles(prev => prev.map(f => ({ ...f, status: 'completed', progress: 100 })));
       
-      toast.success(`Successfully uploaded ${files.length} document(s)!`);
+      toast.success(`Successfully uploaded ${files.length} document${files.length > 1 ? 's' : ''}!`, {
+        id: toastId,
+        icon: '🚀',
+      });
       
-      // Clear files after successful upload
+      // Clear files after delay
       setTimeout(() => {
         setFiles([]);
+        setIsProcessing(false);
       }, 2000);
       
     } catch (error) {
-      toast.error('Upload failed. Please try again.');
+      toast.error('Upload failed. Please try again.', { id: toastId });
       setFiles(prev => prev.map(f => ({ ...f, status: 'error' })));
+      setIsProcessing(false);
     }
   };
 
-  const getFileIcon = (fileName) => {
-    const extension = fileName.split('.').pop().toLowerCase();
+  const getFileIcon = (file) => {
+    const extension = file.name.split('.').pop().toLowerCase();
+    const iconProps = { className: "w-5 h-5" };
+    
     switch (extension) {
       case 'pdf':
-        return <FileText className="w-8 h-8 text-red-500" />;
-      case 'docx':
+        return <FileText {...iconProps} className="w-5 h-5 text-red-400" />;
       case 'doc':
-        return <File className="w-8 h-8 text-blue-500" />;
+      case 'docx':
+        return <FileText {...iconProps} className="w-5 h-5 text-blue-400" />;
       case 'txt':
-        return <FileText className="w-8 h-8 text-gray-500" />;
-      case 'html':
-        return <FileText className="w-8 h-8 text-orange-500" />;
+        return <File {...iconProps} className="w-5 h-5 text-gray-400" />;
       case 'md':
-        return <FileText className="w-8 h-8 text-purple-500" />;
+        return <FileCode {...iconProps} className="w-5 h-5 text-purple-400" />;
+      case 'html':
+        return <FileCode {...iconProps} className="w-5 h-5 text-orange-400" />;
       default:
-        return <File className="w-8 h-8 text-gray-400" />;
+        return <File {...iconProps} className="w-5 h-5 text-gray-400" />;
     }
+  };
+
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
-      {/* Header */}
-      <div className="text-center mb-8">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="inline-flex items-center gap-2 mb-4"
-        >
-          <Zap className="w-8 h-8 text-primary-500" />
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-primary-600 to-purple-600 bg-clip-text text-transparent">
-            Document Upload
-          </h1>
-        </motion.div>
-        <p className="text-gray-600 text-lg">
-          Upload your documents to start asking questions with AI-powered search
+    <div className="max-w-5xl mx-auto">
+      {/* Header Section */}
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="text-center mb-8"
+      >
+        <h2 className="text-4xl font-bold font-display gradient-text mb-4">
+          Upload Your Documents
+        </h2>
+        <p className="text-gray-400 text-lg">
+          Transform your documents into an intelligent knowledge base
         </p>
-      </div>
+      </motion.div>
 
-      {/* Stats */}
-      {documents.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="bg-gradient-to-r from-green-50 to-blue-50 rounded-xl p-4 mb-6 border border-green-200"
-        >
-          <div className="flex items-center justify-center gap-2 text-green-700">
-            <CheckCircle className="w-5 h-5" />
-            <span className="font-medium">
-              {documents.length} document{documents.length !== 1 ? 's' : ''} ready for questions
+      {/* Stats Bar */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ delay: 0.1 }}
+        className="grid grid-cols-3 gap-4 mb-8"
+      >
+        <div className="glass-card text-center">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <HardDrive className="w-5 h-5 text-blue-400" />
+            <span className="text-2xl font-bold">{documents.length}</span>
+          </div>
+          <p className="text-sm text-gray-400">Documents Stored</p>
+        </div>
+        <div className="glass-card text-center">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <Zap className="w-5 h-5 text-yellow-400" />
+            <span className="text-2xl font-bold">
+              {documents.reduce((acc, doc) => acc + (doc.chunks_created || 0), 0)}
             </span>
           </div>
-        </motion.div>
-      )}
+          <p className="text-sm text-gray-400">Vector Chunks</p>
+        </div>
+        <div className="glass-card text-center">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <Cloud className="w-5 h-5 text-green-400" />
+            <span className="text-2xl font-bold">
+              {formatFileSize(documents.reduce((acc, doc) => acc + (doc.char_count || 0), 0))}
+            </span>
+          </div>
+          <p className="text-sm text-gray-400">Data Processed</p>
+        </div>
+      </motion.div>
 
-      {/* Upload Area */}
+      {/* Main Upload Area */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-        className="mb-6"
+        transition={{ delay: 0.2 }}
       >
         <div
           {...getRootProps()}
           className={`
-            relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer
-            transition-all duration-300 ease-in-out
-            ${isDragActive || dragActive
-              ? 'border-primary-400 bg-primary-50 shadow-glow'
-              : 'border-gray-300 hover:border-primary-300 hover:bg-gray-50'
+            relative overflow-hidden rounded-2xl border-2 border-dashed 
+            transition-all duration-300 cursor-pointer
+            ${isDragActive 
+              ? 'border-primary-400 bg-primary-400/10 scale-105' 
+              : 'border-white/20 bg-white/5 hover:bg-white/10 hover:border-white/30'
             }
-            ${isUploading ? 'pointer-events-none opacity-75' : ''}
+            ${isDragReject ? 'border-red-400 bg-red-400/10' : ''}
           `}
         >
           <input {...getInputProps()} />
           
-          <motion.div
-            animate={{
-              scale: isDragActive ? 1.05 : 1,
-              rotate: isDragActive ? 2 : 0
-            }}
-            transition={{ duration: 0.2 }}
-            className="flex flex-col items-center gap-4"
-          >
-            <div className={`
-              w-16 h-16 rounded-full flex items-center justify-center
-              ${isDragActive 
-                ? 'bg-primary-100 text-primary-600' 
-                : 'bg-gray-100 text-gray-400'
-              }
-            `}>
-              <Upload className="w-8 h-8" />
-            </div>
-            
-            <div>
-              <h3 className="text-xl font-semibold mb-2">
-                {isDragActive ? 'Drop files here' : 'Upload Documents'}
-              </h3>
-              <p className="text-gray-600 mb-2">
-                Drag & drop files here, or <span className="text-primary-600 font-medium">browse</span>
-              </p>
-              <p className="text-sm text-gray-500">
-                Supports: PDF, Word (.docx, .doc), Text (.txt), HTML, Markdown • Max 50MB per file
-              </p>
-            </div>
-          </motion.div>
-
-          {/* Upload Progress */}
-          {isUploading && (
+          {/* Animated Background Pattern */}
+          <div className="absolute inset-0 opacity-10">
+            <div className="absolute inset-0 bg-gradient-to-br from-primary-400/20 via-transparent to-purple-400/20"></div>
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="absolute inset-0 bg-white bg-opacity-90 flex flex-col items-center justify-center rounded-xl"
+              animate={{
+                backgroundPosition: ['0% 0%', '100% 100%'],
+              }}
+              transition={{
+                duration: 20,
+                repeat: Infinity,
+                repeatType: 'reverse',
+              }}
+              className="absolute inset-0"
+              style={{
+                backgroundImage: 'url("data:image/svg+xml,%3Csvg width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg"%3E%3Cg fill="none" fill-rule="evenodd"%3E%3Cg fill="%239C92AC" fill-opacity="0.1"%3E%3Cpath d="M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z"/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")',
+                backgroundSize: '60px 60px',
+              }}
+            />
+          </div>
+          
+          <div className="relative z-10 p-12 text-center">
+            <motion.div
+              animate={{
+                y: isDragActive ? -10 : 0,
+                scale: isDragActive ? 1.1 : 1,
+              }}
+              transition={{ type: "spring", stiffness: 300 }}
+              className="mb-6"
             >
-              <div className="w-32 h-32 relative mb-4">
-                <svg className="w-32 h-32 transform -rotate-90">
-                  <circle
-                    cx="64"
-                    cy="64"
-                    r="56"
-                    stroke="currentColor"
-                    strokeWidth="8"
-                    fill="none"
-                    className="text-gray-200"
-                  />
-                  <circle
-                    cx="64"
-                    cy="64"
-                    r="56"
-                    stroke="currentColor"
-                    strokeWidth="8"
-                    fill="none"
-                    strokeDasharray={351.86}
-                    strokeDashoffset={351.86 - (351.86 * uploadProgress) / 100}
-                    className="text-primary-500 transition-all duration-300"
-                  />
-                </svg>
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="text-2xl font-bold text-primary-600">
-                    {uploadProgress}%
-                  </span>
-                </div>
+              <div className="relative inline-block">
+                <Upload className="w-16 h-16 text-primary-400 mx-auto" />
+                <motion.div
+                  animate={{
+                    scale: [1, 1.2, 1],
+                    opacity: [0.5, 0.8, 0.5],
+                  }}
+                  transition={{
+                    duration: 2,
+                    repeat: Infinity,
+                  }}
+                  className="absolute inset-0 bg-primary-400/30 rounded-full blur-xl"
+                />
               </div>
-              <p className="text-lg font-medium text-gray-700">
-                Processing documents...
-              </p>
             </motion.div>
-          )}
+            
+            <h3 className="text-xl font-semibold mb-2">
+              {isDragActive ? 'Drop your files here' : 'Drag & drop your documents'}
+            </h3>
+            <p className="text-gray-400 mb-4">
+              or <button 
+                className="text-primary-400 hover:text-primary-300 font-medium transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
+              >
+                browse files
+              </button>
+            </p>
+            <p className="text-sm text-gray-500">
+              Supports PDF, Word, TXT, HTML, and Markdown files up to 50MB
+            </p>
+          </div>
         </div>
       </motion.div>
 
-      {/* Selected Files */}
+      {/* File List */}
       <AnimatePresence>
         {files.length > 0 && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="mb-6"
+            className="mt-6 space-y-3"
           >
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <File className="w-5 h-5" />
-              Selected Files ({files.length})
-            </h3>
-            
-            <div className="space-y-3">
-              {files.map((fileObj) => (
-                <motion.div
-                  key={fileObj.id}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
-                  className={`
-                    flex items-center gap-4 p-4 rounded-lg border
-                    ${fileObj.status === 'uploaded' 
-                      ? 'bg-green-50 border-green-200' 
-                      : fileObj.status === 'error'
-                      ? 'bg-red-50 border-red-200'
-                      : 'bg-white border-gray-200'
-                    }
-                    transition-colors duration-200
-                  `}
-                >
-                  {getFileIcon(fileObj.file.name)}
-                  
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-gray-900 truncate">
-                      {fileObj.file.name}
-                    </p>
-                    <p className="text-sm text-gray-500">
-                      {utils.formatFileSize(fileObj.file.size)}
-                    </p>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    {fileObj.status === 'uploaded' && (
-                      <CheckCircle className="w-5 h-5 text-green-500" />
-                    )}
-                    {fileObj.status === 'error' && (
-                      <AlertCircle className="w-5 h-5 text-red-500" />
-                    )}
-                    {fileObj.status === 'pending' && !isUploading && (
-                      <button
-                        onClick={() => removeFile(fileObj.id)}
-                        className="p-1 hover:bg-gray-100 rounded-full transition-colors"
-                      >
-                        <X className="w-4 h-4 text-gray-400" />
-                      </button>
-                    )}
-                  </div>
-                </motion.div>
-              ))}
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">
+                Ready to Upload ({files.length} file{files.length > 1 ? 's' : ''})
+              </h3>
+              <button
+                onClick={() => setFiles([])}
+                className="text-sm text-gray-400 hover:text-white transition-colors"
+              >
+                Clear all
+              </button>
             </div>
+            
+            {files.map((file, index) => (
+              <motion.div
+                key={file.id}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                transition={{ delay: index * 0.05 }}
+                className="glass-card rounded-xl p-4"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4 flex-1">
+                    <div className="relative">
+                      {getFileIcon(file.file)}
+                      {file.status === 'uploading' && (
+                        <motion.div
+                          animate={{ rotate: 360 }}
+                          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                          className="absolute inset-0"
+                        >
+                          <Loader className="w-5 h-5 text-primary-400" />
+                        </motion.div>
+                      )}
+                      {file.status === 'completed' && (
+                        <motion.div
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
+                          className="absolute -bottom-1 -right-1 bg-green-500 rounded-full p-0.5"
+                        >
+                          <CheckCircle className="w-3 h-3 text-white" />
+                        </motion.div>
+                      )}
+                      {file.status === 'error' && (
+                        <motion.div
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
+                          className="absolute -bottom-1 -right-1 bg-red-500 rounded-full p-0.5"
+                        >
+                          <AlertCircle className="w-3 h-3 text-white" />
+                        </motion.div>
+                      )}
+                    </div>
+                    
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{file.file.name}</p>
+                      <p className="text-sm text-gray-400">
+                        {formatFileSize(file.file.size)}
+                        {file.status === 'uploading' && ` • ${file.progress}%`}
+                        {file.status === 'completed' && ' • Uploaded'}
+                        {file.status === 'error' && ' • Failed'}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <button
+                    onClick={() => removeFile(file.id)}
+                    className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                    disabled={file.status === 'uploading'}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                
+                {/* Progress Bar */}
+                {file.status === 'uploading' && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="mt-3"
+                  >
+                    <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${file.progress}%` }}
+                        className="h-full bg-gradient-to-r from-primary-400 to-purple-400"
+                      />
+                    </div>
+                  </motion.div>
+                )}
+              </motion.div>
+            ))}
+            
+            {/* Upload Button */}
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={handleUpload}
+              disabled={isProcessing || files.length === 0}
+              className={`
+                w-full py-4 rounded-xl font-semibold text-white
+                bg-gradient-to-r from-primary-500 to-purple-500
+                hover:from-primary-600 hover:to-purple-600
+                disabled:opacity-50 disabled:cursor-not-allowed
+                transition-all duration-300 flex items-center justify-center gap-3
+                shadow-lg hover:shadow-xl hover:shadow-primary-500/25
+              `}
+            >
+              {isProcessing ? (
+                <>
+                  <Loader className="w-5 h-5 animate-spin" />
+                  Processing Documents...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-5 h-5" />
+                  Upload & Process Documents
+                  <ChevronRight className="w-5 h-5" />
+                </>
+              )}
+            </motion.button>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Upload Button */}
-      {files.length > 0 && !isUploading && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex justify-center"
-        >
-          <button
-            onClick={handleUpload}
-            disabled={files.length === 0}
-            className="
-              px-8 py-3 bg-gradient-to-r from-primary-500 to-primary-600 
-              text-white font-semibold rounded-lg shadow-lg hover:shadow-xl
-              transform hover:scale-105 transition-all duration-200
-              disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none
-              flex items-center gap-2
-            "
-          >
-            <Upload className="w-5 h-5" />
-            Upload {files.length} Document{files.length !== 1 ? 's' : ''}
-          </button>
-        </motion.div>
-      )}
-
-      {/* Quick Tips */}
+      {/* Features Section */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ delay: 0.3 }}
-        className="mt-8 bg-gray-50 rounded-lg p-6"
+        transition={{ delay: 0.4 }}
+        className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-4"
       >
-        <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-          <Download className="w-5 h-5" />
-          Quick Tips
-        </h4>
-        <ul className="space-y-2 text-sm text-gray-600">
-          <li className="flex items-start gap-2">
-            <span className="w-1.5 h-1.5 bg-primary-400 rounded-full mt-2 flex-shrink-0"></span>
-            Upload multiple documents at once for comprehensive knowledge base
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="w-1.5 h-1.5 bg-primary-400 rounded-full mt-2 flex-shrink-0"></span>
-            Larger documents will be automatically chunked for optimal search
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="w-1.5 h-1.5 bg-primary-400 rounded-full mt-2 flex-shrink-0"></span>
-            Processing time depends on document size and complexity
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="w-1.5 h-1.5 bg-primary-400 rounded-full mt-2 flex-shrink-0"></span>
-            All documents are securely processed and stored
-          </li>
-        </ul>
+        <div className="glass-card rounded-xl p-6 text-center">
+          <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg flex items-center justify-center mx-auto mb-4">
+            <Zap className="w-6 h-6 text-white" />
+          </div>
+          <h4 className="font-semibold mb-2">GPU Accelerated</h4>
+          <p className="text-sm text-gray-400">
+            Lightning-fast processing with RTX 4050 GPU acceleration
+          </p>
+        </div>
+        
+        <div className="glass-card rounded-xl p-6 text-center">
+          <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center mx-auto mb-4">
+            <FileText className="w-6 h-6 text-white" />
+          </div>
+          <h4 className="font-semibold mb-2">Smart Chunking</h4>
+          <p className="text-sm text-gray-400">
+            Intelligent document splitting for optimal retrieval
+          </p>
+        </div>
+        
+        <div className="glass-card rounded-xl p-6 text-center">
+          <div className="w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-500 rounded-lg flex items-center justify-center mx-auto mb-4">
+            <CheckCircle className="w-6 h-6 text-white" />
+          </div>
+          <h4 className="font-semibold mb-2">Multiple Formats</h4>
+          <p className="text-sm text-gray-400">
+            Support for PDF, Word, Text, HTML, and Markdown files
+          </p>
+        </div>
       </motion.div>
     </div>
   );
