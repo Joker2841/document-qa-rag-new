@@ -91,18 +91,34 @@ export const useAppStore = create((set, get) => ({
 
   setCurrentQuestion: (question) => set({ currentQuestion: question }),
 
+  conversationContext: [],
+  
+  clearConversation: () => set({ 
+  conversationContext: [],
+  queryHistory: []
+  }),
+
   askQuestion: async (question, options = {}) => {
-    const { selectedDocuments, queryHistory } = get();
+    const { selectedDocuments, queryHistory, conversationContext } = get();
     const selectedDocumentsIds = selectedDocuments.map(doc => `${doc.id}_${doc.filename}`);
-    // Don't add placeholder to history, just set loading state
+    
     set({ isLoading: true });
-
+  
     try {
-      
-      // Make the actual API call
-      const result = await queryAPI.askQuestion(question, selectedDocumentsIds, options);
-
-      // On success, add the complete item to history
+      // Use context-aware endpoint
+      const result = await queryAPI.askQuestionWithContext(
+        question, 
+        conversationContext,
+        selectedDocumentsIds, 
+        options
+      );
+  
+      // Update conversation context (keep last 3)
+      const newContext = [
+        ...conversationContext.slice(-2),
+        { question, answer: result.answer }
+      ];
+  
       const historyItem = {
         id: result.timestamp || `query_${Date.now()}`,
         question,
@@ -114,17 +130,18 @@ export const useAppStore = create((set, get) => ({
         timestamp: result.timestamp ?? new Date().toISOString(),
         documentIds: selectedDocuments,
       };
-
+  
       set((state) => ({
         isLoading: false,
         queryHistory: [historyItem, ...state.queryHistory.slice(0, 49)],
+        conversationContext: newContext,
         activeTab: 'chat',
       }));
-
+  
       return result;
-
+  
     } catch (error) {
-      // On error, add error item to history
+      // Error handling stays the same
       const errorHistoryItem = {
         id: `error_${Date.now()}`,
         question,
@@ -137,7 +154,7 @@ export const useAppStore = create((set, get) => ({
         documentIds: selectedDocuments,
         isError: true,
       };
-
+  
       set((state) => ({
         isLoading: false,
         queryHistory: [errorHistoryItem, ...state.queryHistory.slice(0, 49)],
@@ -156,6 +173,8 @@ export const useAppStore = create((set, get) => ({
       throw error;
     }
   },
+
+  
 
   clearCurrentAnswer: () => set({ currentAnswer: null }),
 
@@ -197,26 +216,50 @@ set({ queryHistory: mapped });
 }));
 
 export const useSettingsStore = create((set) => ({
-  maxSources: 3,
-  temperature: 0.7,
+  maxSources: 5,
+  temperature: 0.3,
   chunkSize: 1000,
-  theme: 'light',
+  scoreThreshold: 0.3,
   showSources: true,
   autoScroll: true,
   soundEnabled: false,
+  selectedLLM: 'local',
+  gpuEnabled: true,
 
-  updateSettings: (newSettings) => set(newSettings),
+  updateSettings: (newSettings) => {
+    set(newSettings);
+    // Save to localStorage
+    localStorage.setItem('documind-settings', JSON.stringify(newSettings));
+  },
 
-  resetSettings: () =>
-    set({
-      maxSources: 3,
-      temperature: 0.7,
+  resetSettings: () => {
+    const defaults = {
+      maxSources: 5,
+      temperature: 0.3,
       chunkSize: 1000,
-      theme: 'light',
+      scoreThreshold: 0.3,
       showSources: true,
       autoScroll: true,
       soundEnabled: false,
-    }),
+      selectedLLM: 'local',
+      gpuEnabled: true
+    };
+    set(defaults);
+    localStorage.removeItem('documind-settings');
+  },
+
+  // Load settings from localStorage on init
+  loadSettings: () => {
+    const saved = localStorage.getItem('documind-settings');
+    if (saved) {
+      try {
+        const settings = JSON.parse(saved);
+        set(settings);
+      } catch (e) {
+        console.error('Failed to load settings:', e);
+      }
+    }
+  }
 }));
 // Improved analytics store with better error handling
 export const useAnalyticsStore = create((set, get) => ({

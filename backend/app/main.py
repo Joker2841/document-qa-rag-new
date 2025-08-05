@@ -4,9 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import torch
 
 from app.config import API_PREFIX
-from app.routers import document, query, analytics  # Added analytics router
+from app.routers import document, query, analytics, websocket  # Added analytics router
 from app.database import init_db
-from app.models.document import DocumentDB 
+from app.models.document import DocumentDB
 import os
 
 print("SYSTEM PATH:", os.environ["PATH"])
@@ -67,6 +67,7 @@ async def shutdown_event():
 app.include_router(document.router, prefix=API_PREFIX)
 app.include_router(query.router, prefix=API_PREFIX)
 app.include_router(analytics.router, prefix=API_PREFIX)  # Added analytics router
+app.include_router(websocket.router)
 
 
 @app.get("/")

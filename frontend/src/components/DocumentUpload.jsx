@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useRef } from 'react';
+import React, { useCallback, useState, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -19,6 +19,7 @@ import {
 import toast from 'react-hot-toast';
 import { useAppStore } from '../store/store';
 import { utils } from '../services/api';
+import websocketService from '../services/websocket';
 
 const DocumentUpload = () => {
   const [files, setFiles] = useState([]);
@@ -31,6 +32,32 @@ const DocumentUpload = () => {
     uploadProgress,
     documents 
   } = useAppStore();
+
+  useEffect(() => {
+    // Connect WebSocket
+    websocketService.connect();
+    
+    // Listen for document progress
+    websocketService.on('document_progress', (data) => {
+      setFiles(prev => prev.map(file => {
+        if (file.documentId === data.document_id) {
+          return {
+            ...file,
+            stage: data.stage,
+            progress: data.progress,
+            details: data.details,
+            status: data.stage === 'complete' ? 'completed' : 
+                    data.stage === 'error' ? 'error' : 'uploading'
+          };
+        }
+        return file;
+      }));
+    });
+    
+    return () => {
+      websocketService.off('document_progress');
+    };
+  }, []);
 
   const onDrop = useCallback((acceptedFiles, rejectedFiles) => {
     // Handle rejected files
@@ -376,20 +403,33 @@ const DocumentUpload = () => {
                   </button>
                 </div>
                 
-                {/* Progress Bar */}
+                {/* Enhanced Progress Display */}
                 {file.status === 'uploading' && (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="mt-3"
-                  >
-                    <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                  <motion.div className="mt-3 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-gray-400">
+                        {file.stage === 'extracting' && '📄 Extracting text...'}
+                        {file.stage === 'chunking' && '✂️ Creating chunks...'}
+                        {file.stage === 'embedding' && '🧠 Generating embeddings...'}
+                        {file.stage === 'indexing' && '📊 Indexing vectors...'}
+                      </span>
+                      <span className="text-primary-400 font-medium">
+                        {file.progress}%
+                      </span>
+                    </div>
+                    
+                    <div className="relative h-2 bg-white/10 rounded-full overflow-hidden">
                       <motion.div
                         initial={{ width: 0 }}
                         animate={{ width: `${file.progress}%` }}
-                        className="h-full bg-gradient-to-r from-primary-400 to-purple-400"
+                        transition={{ duration: 0.3 }}
+                        className="absolute h-full bg-gradient-to-r from-primary-400 to-purple-400"
                       />
                     </div>
+                    
+                    {file.details && (
+                      <p className="text-xs text-gray-500 mt-1">{file.details}</p>
+                    )}
                   </motion.div>
                 )}
               </motion.div>

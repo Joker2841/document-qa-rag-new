@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Upload, 
@@ -11,19 +11,86 @@ import {
   Sparkles,
   Zap,
   Database,
-  Cpu
+  Cpu,
+  Settings,
+  Loader
 } from 'lucide-react';
 import { Toaster } from 'react-hot-toast';
+import { useAppStore, useSettingsStore } from './store/store';
+import OfflineIndicator from './components/OfflineIndicator';
+import { useRegisterSW } from 'virtual:pwa-register/react';
+
+// Eager load critical components
 import DocumentUpload from './components/DocumentUpload';
 import ChatInterface from './components/ChatInterface';
-import DocumentList from './components/DocumentList';
-import AnalyticsDashboard from './components/AnalyticsDashboard';
-import { useAppStore } from './store/store';
+
+// Lazy load non-critical components
+const DocumentList = lazy(() => 
+  import('./components/DocumentList' /* webpackChunkName: "documents" */)
+);
+const AnalyticsDashboard = lazy(() => 
+  import('./components/AnalyticsDashboard' /* webpackChunkName: "analytics" */)
+);
+const SettingsPanel = lazy(() => 
+  import('./components/SettingsPanel' /* webpackChunkName: "settings" */)
+);
+
+// Loading component with glass morphism
+const ComponentLoader = ({ name }) => (
+  <div className="flex items-center justify-center min-h-[60vh]">
+    <motion.div
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="glass-card rounded-2xl p-8 text-center"
+    >
+      <motion.div
+        animate={{ rotate: 360 }}
+        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+        className="w-16 h-16 mx-auto mb-4"
+      >
+        <Loader className="w-full h-full text-primary-400" />
+      </motion.div>
+      <p className="text-gray-400">Loading {name}...</p>
+    </motion.div>
+  </div>
+);
+
+// Preload components on hover for better UX
+const preloadComponent = (componentName) => {
+  switch(componentName) {
+    case 'documents':
+      import('./components/DocumentList' /* webpackChunkName: "documents" */);
+      break;
+    case 'analytics':
+      import('./components/AnalyticsDashboard' /* webpackChunkName: "analytics" */);
+      break;
+  }
+};
 
 function App() {
   const [activeTab, setActiveTab] = useState('upload');
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const { documents } = useAppStore();
+  const [settingsOpen, setSettingsOpen] = useState(false); // Add this state
+  const { documents, initialize } = useAppStore();
+  const { loadSettings } = useSettingsStore();
+
+  // Initialize app
+  useEffect(() => {
+    loadSettings();
+    initialize();
+    
+    // Measure performance
+    if ('performance' in window) {
+      window.addEventListener('load', () => {
+        const perfData = performance.getEntriesByType('navigation')[0];
+        console.log('App Performance:', {
+          domContentLoaded: Math.round(perfData.domContentLoadedEventEnd - perfData.domContentLoadedEventStart),
+          loadComplete: Math.round(perfData.loadEventEnd - perfData.loadEventStart),
+          totalTime: Math.round(perfData.loadEventEnd - perfData.fetchStart)
+        });
+      });
+    }
+  }, []);
 
   // Animated background elements
   const BackgroundElements = () => (
@@ -59,7 +126,8 @@ function App() {
       color: 'from-purple-500 to-pink-500',
       description: 'Manage files',
       badge: documents.length,
-      glow: 'hover:shadow-purple-500/25'
+      glow: 'hover:shadow-purple-500/25',
+      onHover: () => preloadComponent('documents') // Preload on hover
     },
     {
       id: 'analytics',
@@ -67,7 +135,8 @@ function App() {
       icon: BarChart3,
       color: 'from-orange-500 to-red-500',
       description: 'View insights',
-      glow: 'hover:shadow-orange-500/25'
+      glow: 'hover:shadow-orange-500/25',
+      onHover: () => preloadComponent('analytics') // Preload on hover
     }
   ];
 
@@ -78,13 +147,67 @@ function App() {
       case 'chat':
         return <ChatInterface />;
       case 'documents':
-        return <DocumentList />;
+        return (
+          <Suspense fallback={<ComponentLoader name="Documents" />}>
+            <DocumentList />
+          </Suspense>
+        );
       case 'analytics':
-        return <AnalyticsDashboard />;
+        return (
+          <Suspense fallback={<ComponentLoader name="Analytics" />}>
+            <AnalyticsDashboard />
+          </Suspense>
+        );
       default:
         return <DocumentUpload />;
     }
   };
+
+  // PWA update prompt
+const {
+  needRefresh: [needRefresh, setNeedRefresh],
+  updateServiceWorker,
+} = useRegisterSW({
+  onRegistered(r) {
+    console.log('Service Worker registered:', r);
+  },
+  onRegisterError(error) {
+    console.error('Service Worker registration error:', error);
+  },
+});
+
+// Install prompt
+const [installPrompt, setInstallPrompt] = useState(null);
+const [showInstallBanner, setShowInstallBanner] = useState(false);
+
+useEffect(() => {
+  const handleBeforeInstallPrompt = (e) => {
+    e.preventDefault();
+    setInstallPrompt(e);
+    // Show banner after 30 seconds
+    setTimeout(() => setShowInstallBanner(true), 30000);
+  };
+
+  window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  
+  return () => {
+    window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  };
+}, []);
+
+const handleInstall = async () => {
+  if (!installPrompt) return;
+  
+  installPrompt.prompt();
+  const { outcome } = await installPrompt.userChoice;
+  
+  if (outcome === 'accepted') {
+    toast.success('App installed successfully!', { icon: '🚀' });
+  }
+  
+  setInstallPrompt(null);
+  setShowInstallBanner(false);
+};
 
   return (
     <div className="min-h-screen bg-dark-bg text-dark-text overflow-hidden">
@@ -172,6 +295,7 @@ function App() {
                         <motion.li key={item.id}>
                           <button
                             onClick={() => !isDisabled && setActiveTab(item.id)}
+                            onMouseEnter={item.onHover} // Trigger preload
                             disabled={isDisabled}
                             className={`
                               w-full group relative overflow-hidden rounded-xl p-4 
@@ -243,7 +367,7 @@ function App() {
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col">
-          {/* Top Bar */}
+          {/* Top Bar - UPDATE THIS SECTION */}
           <header className="glass-morphism border-b border-white/10 px-6 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
@@ -258,16 +382,32 @@ function App() {
                 </h2>
               </div>
               
-              {/* Performance Metrics Preview */}
-              <div className="hidden md:flex items-center gap-4">
-                <div className="flex items-center gap-2 text-sm">
-                  <Cpu className="w-4 h-4 text-green-400" />
-                  <span className="text-gray-400">GPU: Active</span>
+              {/* Right side of header */}
+              <div className="flex items-center gap-4">
+                {/* Performance Metrics Preview */}
+                <div className="hidden md:flex items-center gap-4">
+                  <div className="flex items-center gap-2 text-sm">
+                    <Cpu className="w-4 h-4 text-green-400" />
+                    <span className="text-gray-400">GPU: Active</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    <Zap className="w-4 h-4 text-yellow-400" />
+                    <span className="text-gray-400">Speed: 0.3s avg</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <Zap className="w-4 h-4 text-yellow-400" />
-                  <span className="text-gray-400">Speed: 0.3s avg</span>
-                </div>
+                
+                {/* Settings Button - ADD THIS */}
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setSettingsOpen(true)}
+                  className="p-2 bg-white/10 rounded-lg hover:bg-white/20 transition-all relative group"
+                >
+                  <Settings className="w-5 h-5" />
+                  <span className="absolute -bottom-8 right-0 text-xs bg-gray-900 text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                    Settings
+                  </span>
+                </motion.button>
               </div>
             </div>
           </header>
@@ -290,6 +430,14 @@ function App() {
           </main>
         </div>
       </div>
+
+      {/* Settings Panel - Lazy loaded */}
+      <Suspense fallback={null}>
+        <SettingsPanel 
+          isOpen={settingsOpen} 
+          onClose={() => setSettingsOpen(false)} 
+        />
+      </Suspense>
 
       {/* Toast Container */}
       <Toaster
@@ -315,7 +463,71 @@ function App() {
           },
         }}
       />
+
+      <OfflineIndicator />
+
+      {/* PWA Update Banner */}
+      {needRefresh && (
+        <motion.div
+          initial={{ y: 100, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 glass-morphism rounded-xl p-4 z-50 border border-white/20"
+        >
+          <p className="text-sm mb-3">New version available! 🎉</p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => updateServiceWorker(true)}
+              className="flex-1 px-4 py-2 bg-gradient-to-r from-primary-500 to-purple-500 text-white rounded-lg font-medium hover:shadow-lg transition-all"
+            >
+              Update Now
+            </button>
+            <button
+              onClick={() => setNeedRefresh(false)}
+              className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+            >
+              Later
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Install Banner */}
+      {showInstallBanner && installPrompt && (
+        <motion.div
+          initial={{ y: 100, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 glass-morphism rounded-xl p-4 z-50 border border-white/20"
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-12 h-12 bg-gradient-to-r from-primary-500 to-purple-500 rounded-xl flex items-center justify-center flex-shrink-0">
+              <Brain className="w-6 h-6 text-white" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold mb-1">Install DocuMind AI</h3>
+              <p className="text-sm text-gray-400 mb-3">
+                Install the app for faster access and offline support
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={handleInstall}
+                  className="px-4 py-2 bg-gradient-to-r from-primary-500 to-purple-500 text-white rounded-lg text-sm font-medium hover:shadow-lg transition-all"
+                >
+                  Install App
+                </button>
+                <button
+                  onClick={() => setShowInstallBanner(false)}
+                  className="px-4 py-2 text-gray-400 hover:text-white transition-colors text-sm"
+                >
+                  Not Now
+                </button>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      )}
     </div>
+     
+    
   );
 }
 

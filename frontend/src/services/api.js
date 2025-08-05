@@ -151,6 +151,24 @@ export const queryAPI = {
     });
   },
 
+    // Ask question with conversation context
+  askQuestionWithContext: async (question, conversationContext = [], documentIds = [], options = {}) => {
+    const response = await api.post('/query/ask-with-context', {
+      question,
+      document_ids: documentIds,
+      top_k: options.top_k || 5,
+      score_threshold: options.score_threshold || 0.3,
+      max_tokens: options.max_tokens || 512,
+      temperature: options.temperature || 0.3,
+    }, {
+      data: {
+        conversation_context: conversationContext
+      }
+    });
+
+    return response.data;
+  },
+
   // Get query history
   getQueryHistory: async (limit = 50) => {
     const response = await api.get(`/query/history?limit=${limit}`);

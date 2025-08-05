@@ -18,16 +18,23 @@ import {
   Cpu,
   TrendingUp,
   BookOpen,
-  Search
+  Search,
+  Plus,
+  History
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import toast from 'react-hot-toast';
 import { useAppStore } from '../store/store';
+import websocketService from '../services/websocket';
 
 const ChatInterface = () => {
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [streamingAnswer, setStreamingAnswer] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   
@@ -37,7 +44,9 @@ const ChatInterface = () => {
     askQuestion,
     isLoading, 
     documents,
-    setActiveTab
+    setActiveTab,
+    conversationContext,
+    clearConversation
   } = useAppStore();
 
   // Transform queryHistory to messages format
@@ -94,6 +103,45 @@ const ChatInterface = () => {
     scrollToBottom();
   }, [messages]);
 
+  // Generate suggestions while typing
+  useEffect(() => {
+    if (input.length > 2) {
+      // Get unique questions from history
+      const historicalQuestions = queryHistory
+        .map(item => item.question)
+        .filter(q => q.toLowerCase().includes(input.toLowerCase()))
+        .slice(0, 5);
+      
+      setSuggestions(historicalQuestions);
+      setShowSuggestions(historicalQuestions.length > 0);
+    } else {
+      setShowSuggestions(false);
+    }
+  }, [input, queryHistory]);
+
+  useEffect(() => {
+    // Listen for streaming answers
+    websocketService.on('answer_stream_start', () => {
+      setIsStreaming(true);
+      setStreamingAnswer('');
+    });
+    
+    websocketService.on('answer_stream_chunk', (data) => {
+      setStreamingAnswer(data.content);
+    });
+    
+    websocketService.on('answer_stream_end', (data) => {
+      setIsStreaming(false);
+      // Update the actual message in history
+    });
+    
+    return () => {
+      websocketService.off('answer_stream_start');
+      websocketService.off('answer_stream_chunk');
+      websocketService.off('answer_stream_end');
+    };
+  }, []);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
@@ -142,6 +190,30 @@ const ChatInterface = () => {
         ))}
       </div>
       <span className="text-sm">AI is thinking...</span>
+    </motion.div>
+  );
+
+  // Streaming indicator component
+  const StreamingIndicator = () => (
+    <motion.div className="flex gap-4">
+      <div className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-r from-green-500 to-emerald-500 shadow-lg">
+        <Bot className="w-5 h-5 text-white" />
+      </div>
+      
+      <div className="flex-1">
+        <motion.div className="inline-block max-w-3xl glass-card rounded-2xl p-4">
+          <div className="prose prose-invert max-w-none">
+            <ReactMarkdown>
+              {streamingAnswer || '█'}
+            </ReactMarkdown>
+            <motion.span
+              animate={{ opacity: [1, 0, 1] }}
+              transition={{ duration: 0.8, repeat: Infinity }}
+              className="inline-block w-1 h-4 bg-primary-400 ml-1"
+            />
+          </div>
+        </motion.div>
+      </div>
     </motion.div>
   );
 
@@ -318,38 +390,59 @@ const ChatInterface = () => {
               <h2 className="text-lg font-semibold">AI Assistant</h2>
               <p className="text-sm text-gray-400 flex items-center gap-1">
                 <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-                Ready to help with your documents
+                {conversationContext.length > 0 
+                  ? `Context: ${conversationContext.length} messages`
+                  : 'Ready to help with your documents'
+                }
               </p>
             </div>
           </div>
           
-          {/* Document selector */}
-          {documents && documents.length > 0 && (
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-400">Search in:</span>
-              <select
-                className="bg-white/10 border border-white/20 rounded-lg px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setSelectedDocumentIds(value === 'all' ? [] : [value]);
+          <div className="flex items-center gap-2">
+            {/* New Conversation Button */}
+            {conversationContext.length > 0 && (
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => {
+                  clearConversation();
+                  toast.success('Started new conversation', { icon: '🆕' });
                 }}
+                className="flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-lg hover:bg-white/20 transition-all text-sm"
               >
-                <option value="all">All documents</option>
-                {documents.map(doc => (
-                  <option key={doc.id} value={doc.id}>{doc.filename}</option>
-                ))}
-              </select>
-            </div>
-          )}
+                <Plus className="w-4 h-4" />
+                New Chat
+              </motion.button>
+            )}
+            
+            {/* Document selector */}
+            {documents && documents.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-400">Search in:</span>
+                <select
+                  className="bg-white/10 border border-white/20 rounded-lg px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setSelectedDocumentIds(value === 'all' ? [] : [value]);
+                  }}
+                >
+                  <option value="all">All documents</option>
+                  {documents.map(doc => (
+                    <option key={doc.id} value={doc.id}>{doc.filename}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
-          {messages && messages.length > 0 && (
-            <button
-              onClick={clearMessages}
-              className="text-sm text-gray-400 hover:text-white transition-colors"
-            >
-              Clear chat
-            </button>
-          )}
+            {messages && messages.length > 0 && (
+              <button
+                onClick={clearMessages}
+                className="text-sm text-gray-400 hover:text-white transition-colors"
+              >
+                Clear chat
+              </button>
+            )}
+          </div>
         </div>
       </motion.div>
 
@@ -408,6 +501,7 @@ const ChatInterface = () => {
             
             <AnimatePresence>
               {isLoading && <TypingIndicator />}
+              {isStreaming && <StreamingIndicator />}
             </AnimatePresence>
             
             <div ref={messagesEndRef} />
@@ -429,6 +523,7 @@ const ChatInterface = () => {
                 ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -450,6 +545,37 @@ const ChatInterface = () => {
                   e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
                 }}
               />
+              
+              {/* Autocomplete Suggestions */}
+              <AnimatePresence>
+                {showSuggestions && suggestions.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="absolute bottom-full mb-2 left-0 right-0 bg-gray-900/95 backdrop-blur-md rounded-xl border border-white/10 overflow-hidden shadow-xl"
+                  >
+                    <div className="p-2">
+                      <p className="text-xs text-gray-400 px-3 py-1 flex items-center gap-1">
+                        <History className="w-3 h-3" />
+                        Recent questions
+                      </p>
+                      {suggestions.map((suggestion, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => {
+                            setInput(suggestion);
+                            setShowSuggestions(false);
+                          }}
+                          className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-white/10 rounded-lg transition-colors"
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
               
               {/* Character count */}
               {input.length > 0 && (

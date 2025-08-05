@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Body
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
@@ -249,6 +249,141 @@ async def ask_question(
             error=str(e)
         )
 
+@router.post("/ask-with-context", response_model=QueryResponse)
+async def ask_question_with_context(
+    request: QueryRequest,
+    conversation_context: List[Dict[str, str]] = Body(default=[]),
+    db: Session = Depends(get_db)
+):
+    """
+    Ask a question with conversation context for follow-up questions.
+    
+    Args:
+        request: The question and parameters
+        conversation_context: List of previous Q&A pairs [{"question": "...", "answer": "..."}]
+    """
+    start_time = time.time()
+    
+    # Build context-aware prompt
+    context_prompt = ""
+    if conversation_context:
+        context_prompt = "Previous conversation:\n"
+        for i, qa in enumerate(conversation_context[-3:]):  # Last 3 Q&A pairs
+            context_prompt += f"Q{i+1}: {qa['question']}\n"
+            context_prompt += f"A{i+1}: {qa['answer']}\n\n"
+        context_prompt += "Current question (consider the conversation context above):\n"
+    
+    # Enhance the question with context
+    enhanced_question = f"{context_prompt}{request.question}" if context_prompt else request.question
+    
+    logger.info(f"🤔 Processing context-aware question: '{request.question[:50]}...' with {len(conversation_context)} context items")
+    
+    try:
+        # Step 1: Search with enhanced understanding
+        selected_doc_ids = []
+        if request.document_ids:
+            selected_docs = db.query(DocumentDB).filter(
+                DocumentDB.id.in_(request.document_ids)
+            ).all()
+            selected_doc_ids = [f"{doc.id}_{doc.filename}" for doc in selected_docs]
+        
+        # Use original question for search but consider context
+        search_results = rag_service.search_documents(
+            query=request.question,  # Original question for better search
+            top_k=request.top_k,
+            score_threshold=request.score_threshold,
+            document_ids=selected_doc_ids if selected_doc_ids else None
+        )
+        
+        if not search_results.get('success') or not search_results.get('results'):
+            # Try searching with full context if no results
+            if conversation_context:
+                search_results = rag_service.search_documents(
+                    query=enhanced_question,
+                    top_k=request.top_k,
+                    score_threshold=request.score_threshold * 0.8,  # Lower threshold for context queries
+                    document_ids=selected_doc_ids if selected_doc_ids else None
+                )
+        
+        if not search_results.get('success') or not search_results.get('results'):
+            return QueryResponse(
+                success=False,
+                answer="I couldn't find any relevant information in the documents to answer your question.",
+                sources=[],
+                response_time=time.time() - start_time,
+                context_chunks_count=0,
+                error="No relevant documents found"
+            )
+        
+        # Step 2: Enhance chunks with document info
+        chunks = search_results['results'][:request.top_k]
+        enhanced_chunks = []
+        
+        for chunk in chunks:
+            doc_id = chunk.get('document_id')
+            if doc_id:
+                document = db.query(DocumentDB).filter(DocumentDB.document_id == doc_id).first()
+                if document:
+                    chunk['document_name'] = document.filename
+                    chunk['document_type'] = document.file_type
+                else:
+                    chunk['document_name'] = f"Document {doc_id}"
+            enhanced_chunks.append(chunk)
+        
+        # Step 3: Generate context-aware answer
+        llm_result = await asyncio.get_event_loop().run_in_executor(
+            executor,
+            llm_service.generate_answer,
+            enhanced_chunks,
+            enhanced_question,  # Pass the context-enhanced question
+            request.max_tokens,
+            request.temperature
+        )
+        
+        # Step 4: Format sources
+        sources = []
+        seen_documents = set()
+        
+        for chunk in enhanced_chunks[:3]:
+            doc_name = chunk.get('document_name', 'Unknown')
+            if doc_name in seen_documents:
+                continue
+            seen_documents.add(doc_name)
+            
+            source_info = SourceInfo(
+                document_name=doc_name,
+                page=chunk.get('page'),
+                similarity_score=round(chunk.get('similarity_score', 0.0), 3),
+                content=chunk.get('text', '')[:200] + "..." if chunk.get('text') else "No content available"
+            )
+            sources.append(source_info)
+        
+        response = QueryResponse(
+            success=True,
+            answer=llm_result['answer'],
+            sources=sources,
+            llm_used=llm_result.get('llm_used'),
+            response_time=time.time() - start_time,
+            context_chunks_count=len(enhanced_chunks)
+        )
+        
+        # Save to history
+        save_query_to_history(db, request.question, response)
+        
+        logger.info(f"✅ Context-aware question answered in {response.response_time:.2f}s")
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"❌ Error processing context-aware question: {e}")
+        return QueryResponse(
+            success=False,
+            answer="I apologize, but I encountered an error while processing your question.",
+            sources=[],
+            response_time=time.time() - start_time,
+            context_chunks_count=0,
+            error=str(e)
+        )
 
 @router.get("/history", response_model=QueryHistoryList)
 async def get_query_history(
