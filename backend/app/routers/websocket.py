@@ -7,7 +7,6 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-#from app.services.rag_service import RAGService
 from app.services.llm import LLMService
 
 logger = logging.getLogger(__name__)

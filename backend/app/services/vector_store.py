@@ -11,19 +11,19 @@ class VectorStore:
     """FAISS-based vector store with GPU acceleration for semantic search."""
     
     def __init__(self, embedding_service: EmbeddingService):
-        """
-        Initialize vector store.
-        
-        Args:
-            embedding_service: Service for generating embeddings
-        """
         self.embedding_service = embedding_service
         self.embedding_dim = embedding_service.get_embedding_dim()
         
         # FAISS index with GPU support if available
         self.index = None
-        self.chunks = []  # Store chunk metadata
-        self.is_gpu_enabled = faiss.get_num_gpus() > 0
+        self.chunks = []
+        
+        # Production-safe GPU detection
+        try:
+            import faiss
+            self.is_gpu_enabled = faiss.get_num_gpus() > 0
+        except:
+            self.is_gpu_enabled = False
         
         # Storage paths
         self.vector_store_dir = DATA_DIR / "vector_store"
@@ -35,6 +35,7 @@ class VectorStore:
         self._initialize_index()
         
         print(f"🗂️ VectorStore initialized (GPU: {self.is_gpu_enabled}, Dim: {self.embedding_dim})")
+
     
     def _initialize_index(self):
         """Initialize FAISS index with GPU support if available."""
@@ -48,13 +49,16 @@ class VectorStore:
 
     def _create_new_index(self):
         """Create a new FAISS index."""
-        # Use IndexFlatIP for cosine similarity (after normalization)
         cpu_index = faiss.IndexFlatIP(self.embedding_dim)
         
         if self.is_gpu_enabled:
-            print("🚀 Enabling GPU acceleration for FAISS")
-            res = faiss.StandardGpuResources()
-            self.index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
+            try:
+                print("🚀 Attempting GPU acceleration for FAISS")
+                res = faiss.StandardGpuResources()
+                self.index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
+            except Exception as e:
+                print(f"⚠️ GPU acceleration failed: {e}, falling back to CPU")
+                self.index = cpu_index
         else:
             print("💻 Using CPU for FAISS")
             self.index = cpu_index

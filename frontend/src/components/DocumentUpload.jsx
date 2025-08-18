@@ -34,29 +34,40 @@ const DocumentUpload = () => {
   } = useAppStore();
 
   useEffect(() => {
-    // Connect WebSocket
-    websocketService.connect();
-    
-    // Listen for document progress
-    websocketService.on('document_progress', (data) => {
-      setFiles(prev => prev.map(file => {
-        if (file.documentId === data.document_id) {
-          return {
-            ...file,
-            stage: data.stage,
-            progress: data.progress,
-            details: data.details,
-            status: data.stage === 'complete' ? 'completed' : 
-                    data.stage === 'error' ? 'error' : 'uploading'
-          };
-        }
-        return file;
-      }));
-    });
-    
-    return () => {
-      websocketService.off('document_progress');
-    };
+    // Connect WebSocket with error handling
+    try {
+      websocketService.connect();
+      
+      // Listen for connection status
+      websocketService.on('error', (error) => {
+        console.error('WebSocket error:', error);
+        toast.error('Real-time updates unavailable. Upload will still work.');
+      });
+      
+      // Listen for document progress
+      websocketService.on('document_progress', (data) => {
+        setFiles(prev => prev.map(file => {
+          if (file.documentId === data.document_id) {
+            return {
+              ...file,
+              stage: data.stage,
+              progress: data.progress,
+              details: data.details,
+              status: data.stage === 'complete' ? 'completed' : 
+                      data.stage === 'error' ? 'error' : 'uploading'
+            };
+          }
+          return file;
+        }));
+      });
+      
+      return () => {
+        websocketService.off('document_progress');
+        websocketService.off('error');
+      };
+    } catch (error) {
+      console.error('Failed to connect WebSocket:', error);
+    }
   }, []);
 
   const onDrop = useCallback((acceptedFiles, rejectedFiles) => {
@@ -123,30 +134,46 @@ const DocumentUpload = () => {
       toast.error('Please select files to upload');
       return;
     }
-
+  
     setIsProcessing(true);
     const toastId = toast.loading('Initializing upload...');
-
+  
     try {
+      // Map file IDs for tracking
+      const fileIdMap = new Map();
+      files.forEach(f => {
+        fileIdMap.set(f.file, f.id);
+      });
+  
       // Update file statuses to uploading
-      setFiles(prev => prev.map(f => ({ ...f, status: 'uploading', progress: 0 })));
-
+      setFiles(prev => prev.map(f => ({ 
+        ...f, 
+        status: 'uploading', 
+        progress: 0,
+        documentId: f.id  // Set documentId to match the temporary ID
+      })));
+  
       const filesToUpload = files.map(f => f.file);
-      await uploadDocuments(filesToUpload);
+      const result = await uploadDocuments(filesToUpload);
       
-      // Update file statuses to completed
-      setFiles(prev => prev.map(f => ({ ...f, status: 'completed', progress: 100 })));
+      // Map the returned document IDs to our file IDs
+      if (result && Array.isArray(result)) {
+        result.forEach((doc, index) => {
+          if (files[index]) {
+            // Update our file tracking with the actual document ID
+            setFiles(prev => prev.map(f => 
+              f.file === filesToUpload[index] 
+                ? { ...f, documentId: doc.id }
+                : f
+            ));
+          }
+        });
+      }
       
-      toast.success(`Successfully uploaded ${files.length} document${files.length > 1 ? 's' : ''}!`, {
+      toast.success(`Upload started for ${files.length} document${files.length > 1 ? 's' : ''}!`, {
         id: toastId,
         icon: '🚀',
       });
-      
-      // Clear files after delay
-      setTimeout(() => {
-        setFiles([]);
-        setIsProcessing(false);
-      }, 2000);
       
     } catch (error) {
       toast.error('Upload failed. Please try again.', { id: toastId });

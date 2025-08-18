@@ -4,7 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import torch
 
 from app.config import API_PREFIX
-from app.routers import document, query, analytics, websocket  # Added analytics router
+from app.config import CORS_ORIGINS
+from app.routers import document, query, analytics, websocket, system  # Added analytics router
 from app.database import init_db
 from app.models.document import DocumentDB
 import os
@@ -28,7 +29,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # React dev servers
+    allow_origins=CORS_ORIGINS,  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -68,7 +69,7 @@ app.include_router(document.router, prefix=API_PREFIX)
 app.include_router(query.router, prefix=API_PREFIX)
 app.include_router(analytics.router, prefix=API_PREFIX)  # Added analytics router
 app.include_router(websocket.router)
-
+app.include_router(system.router, prefix=API_PREFIX)
 
 @app.get("/")
 async def root():

@@ -42,11 +42,16 @@ const ChatInterface = () => {
   const { 
     queryHistory,
     askQuestion,
+    askQuestionWithStreaming,
     isLoading, 
     documents,
     setActiveTab,
     conversationContext,
-    clearConversation
+    clearConversation,
+    useStreaming,
+    toggleStreaming,
+    updateStreamingMessage,
+    streamingMessageId
   } = useAppStore();
 
   // Transform queryHistory to messages format
@@ -80,15 +85,6 @@ const ChatInterface = () => {
   }, [queryHistory]);
 
   // Create wrapper functions
-  const sendMessage = async (question, documentIds) => {
-    try {
-      // Pass empty array if no documents selected, which means search all
-      await askQuestion(question, { document_ids: documentIds || [] });
-    } catch (error) {
-      console.error('Error sending message:', error);
-      toast.error('Failed to send message. Please ensure you have documents uploaded.');
-    }
-  };
 
   const clearMessages = () => {
     // Since there's no clear function in the store, we'll just show a toast
@@ -121,26 +117,84 @@ const ChatInterface = () => {
 
   useEffect(() => {
     // Listen for streaming answers
-    websocketService.on('answer_stream_start', () => {
+    websocketService.on('answer_stream_start', (data) => {
+      console.log('Stream started:', data);
       setIsStreaming(true);
       setStreamingAnswer('');
     });
     
     websocketService.on('answer_stream_chunk', (data) => {
+      console.log('Stream chunk:', data);
       setStreamingAnswer(data.content);
+      
+      // Update the message in history
+      if (streamingMessageId) {
+        updateStreamingMessage(streamingMessageId, data.content, false);
+      }
     });
     
     websocketService.on('answer_stream_end', (data) => {
+      console.log('Stream ended:', data);
       setIsStreaming(false);
-      // Update the actual message in history
+      
+      // Final update with complete answer
+      if (streamingMessageId) {
+        updateStreamingMessage(streamingMessageId, data.content, true);
+        
+        // Update conversation context
+        const newContext = [
+          ...conversationContext.slice(-2),
+          { question: input, answer: data.content }
+        ];
+        useAppStore.setState({ conversationContext: newContext });
+      }
+    });
+    
+    websocketService.on('answer_stream_error', (data) => {
+      console.error('Stream error:', data);
+      setIsStreaming(false);
+      toast.error('Streaming failed: ' + data.error);
     });
     
     return () => {
       websocketService.off('answer_stream_start');
       websocketService.off('answer_stream_chunk');
       websocketService.off('answer_stream_end');
+      websocketService.off('answer_stream_error');
     };
-  }, []);
+  }, [streamingMessageId, conversationContext, updateStreamingMessage]);
+
+  // Updated sendMessage function
+  const sendMessage = async (question, documentIds) => {
+    try {
+      if (useStreaming && websocketService.ws?.readyState === WebSocket.OPEN) {
+        // Use streaming mode
+        await askQuestionWithStreaming(question, { document_ids: documentIds || [] });
+      } else {
+        // Fall back to HTTP mode
+        await askQuestion(question, { document_ids: documentIds || [] });
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      toast.error('Failed to send message. Please ensure you have documents uploaded.');
+    }
+  };
+
+  // Add streaming toggle to the UI
+  const StreamingToggle = () => (
+    <motion.button
+      whileHover={{ scale: 1.05 }}
+      whileTap={{ scale: 0.95 }}
+      onClick={toggleStreaming}
+      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+      title={useStreaming ? "Streaming enabled" : "Streaming disabled"}
+    >
+      <Zap className={`w-4 h-4 ${useStreaming ? 'text-yellow-400' : 'text-gray-400'}`} />
+      <span className="text-xs text-gray-300">
+        {useStreaming ? 'Streaming' : 'Standard'}
+      </span>
+    </motion.button>
+  );
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -220,7 +274,7 @@ const ChatInterface = () => {
   // Message component with animations
   const MessageComponent = ({ message, index }) => {
     const isUser = message.role === 'user';
-    
+    const isCurrentlyStreaming = message.isStreaming;
     return (
       <motion.div
         initial={{ opacity: 0, x: isUser ? 20 : -20 }}
@@ -282,6 +336,16 @@ const ChatInterface = () => {
                 >
                   {message.content}
                 </ReactMarkdown>
+
+                {/* Streaming cursor */}
+                {isCurrentlyStreaming && (
+                  <motion.span
+                    animate={{ opacity: [1, 0, 1] }}
+                    transition={{ duration: 0.8, repeat: Infinity }}
+                    className="inline-block w-1 h-4 bg-primary-400 ml-1"
+                  />
+                )}
+          
               </div>
                 {/* Sources */}
                 {message.sources && message.sources.length > 0 && (
@@ -442,6 +506,22 @@ const ChatInterface = () => {
                 Clear chat
               </button>
             )}
+
+            <StreamingToggle />
+            {conversationContext.length > 0 && (
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={clearConversation}
+                className="px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 
+                         text-red-300 text-sm font-medium transition-colors
+                         flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4 rotate-45" />
+                New Chat
+              </motion.button>
+            )}
+
           </div>
         </div>
       </motion.div>

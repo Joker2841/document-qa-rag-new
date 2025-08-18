@@ -23,6 +23,7 @@ import { useRegisterSW } from 'virtual:pwa-register/react';
 // Eager load critical components
 import DocumentUpload from './components/DocumentUpload';
 import ChatInterface from './components/ChatInterface';
+import PerformanceShowcase from './components/PerformanceShowcase';
 
 // Lazy load non-critical components
 const DocumentList = lazy(() => 
@@ -415,6 +416,7 @@ const handleInstall = async () => {
           {/* Content Area */}
           <main className="flex-1 overflow-auto">
             <div className="p-6">
+            {activeTab === 'upload' && <PerformanceShowcase />}
               <AnimatePresence mode="wait">
                 <motion.div
                   key={activeTab}

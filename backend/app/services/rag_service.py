@@ -91,7 +91,8 @@ class RAGService:
         file_path: str, 
         document_id: str,
         metadata: Dict[str, Any] = None,
-        client_id: str = None
+        client_id: str = None,
+        websocket_manager = None  # Pass as parameter
     ) -> Dict[str, Any]:
         """
         Complete pipeline with real-time progress updates.
@@ -99,7 +100,7 @@ class RAGService:
         print(f"📄 Processing document: {document_id}")
         
         async def send_progress(stage: str, progress: int, details: str = ""):
-            if client_id:
+            if client_id and websocket_manager:
                 await websocket_manager.send_json(client_id, {
                     "type": "document_progress",
                     "document_id": document_id,

@@ -47,21 +47,29 @@ export const useAppStore = create((set, get) => ({
 
   uploadDocuments: async (files) => {
     set({ isUploading: true, uploadProgress: 0 });
-
+  
     try {
+      // Pass the WebSocket client ID with the upload
       const result = await documentAPI.uploadDocuments(files, (progress) => {
         set({ uploadProgress: progress });
       });
-
-      const { documents, count } = await documentAPI.getDocuments();
+  
+      // Don't immediately refresh - let WebSocket handle the updates
       set({
-        documents: normalizeDocuments(documents),
-        totalDocumentCount: count,
         isUploading: false,
         uploadProgress: 0,
-        activeTab: 'documents',
       });
-
+  
+      // Refresh documents after a delay to ensure processing is visible
+      setTimeout(async () => {
+        const { documents, count } = await documentAPI.getDocuments();
+        set({
+          documents: normalizeDocuments(documents),
+          totalDocumentCount: count,
+          activeTab: 'documents',
+        });
+      }, 2000);
+  
       return result;
     } catch (error) {
       set({ isUploading: false, uploadProgress: 0 });
@@ -100,7 +108,7 @@ export const useAppStore = create((set, get) => ({
 
   askQuestion: async (question, options = {}) => {
     const { selectedDocuments, queryHistory, conversationContext } = get();
-    const selectedDocumentsIds = selectedDocuments.map(doc => `${doc.id}_${doc.filename}`);
+    const selectedDocumentIds = options.document_ids || selectedDocuments.map(doc => doc.id);
     
     set({ isLoading: true });
   
@@ -109,7 +117,7 @@ export const useAppStore = create((set, get) => ({
       const result = await queryAPI.askQuestionWithContext(
         question, 
         conversationContext,
-        selectedDocumentsIds, 
+        selectedDocumentIds, 
         options
       );
   
@@ -163,6 +171,90 @@ export const useAppStore = create((set, get) => ({
       console.error('Failed to ask question:', error);
       throw error;
     }
+  },
+
+  // Add streaming-related state
+  isStreaming: false,
+  streamingMessageId: null,
+  useStreaming: true, // Toggle for streaming mode
+
+  // Toggle streaming mode
+  toggleStreaming: () => set((state) => ({ useStreaming: !state.useStreaming })),
+
+  // Ask question with streaming support
+  askQuestionWithStreaming: async (question, options = {}) => {
+    const { selectedDocuments, queryHistory, conversationContext } = get();
+    const selectedDocumentIds = options.document_ids || selectedDocuments.map(doc => doc.id);
+    
+    set({ isLoading: true, isStreaming: true });
+
+    // Create a temporary message ID for tracking
+    const tempMessageId = `streaming_${Date.now()}`;
+    set({ streamingMessageId: tempMessageId });
+
+    try {
+      // First, search for context chunks via HTTP
+      const searchResults = await queryAPI.searchDocuments(question, selectedDocumentIds, 5);
+      
+      if (!searchResults.results || searchResults.results.length === 0) {
+        throw new Error('No relevant documents found');
+      }
+
+      // Send streaming request via WebSocket
+      websocketService.send({
+        type: 'stream_answer',
+        question: question,
+        context_chunks: searchResults.results,
+        conversation_context: conversationContext
+      });
+
+      // Create placeholder for streaming message
+      const historyItem = {
+        id: tempMessageId,
+        question,
+        answer: {
+          answer: '', // Will be filled by streaming
+          sources: searchResults.results.map(r => ({
+            document_name: r.metadata?.filename || 'Unknown',
+            similarity_score: r.score || 0,
+            content: r.content
+          })),
+          response_time: 0,
+        },
+        timestamp: new Date().toISOString(),
+        documentIds: selectedDocuments,
+        isStreaming: true
+      };
+
+      set((state) => ({
+        queryHistory: [historyItem, ...state.queryHistory.slice(0, 49)],
+        activeTab: 'chat',
+      }));
+
+      return { success: true, messageId: tempMessageId };
+
+    } catch (error) {
+      set({ isLoading: false, isStreaming: false });
+      console.error('Failed to start streaming:', error);
+      throw error;
+    }
+  },
+
+  // Update streaming message
+  updateStreamingMessage: (messageId, content, isComplete = false) => {
+    set((state) => ({
+      queryHistory: state.queryHistory.map(item => 
+        item.id === messageId 
+          ? {
+              ...item,
+              answer: { ...item.answer, answer: content },
+              isStreaming: !isComplete
+            }
+          : item
+      ),
+      isLoading: isComplete ? false : state.isLoading,
+      isStreaming: !isComplete
+    }));
   },
 
   searchDocuments: async (query, limit = 10) => {

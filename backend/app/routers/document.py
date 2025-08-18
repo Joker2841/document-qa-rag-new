@@ -11,6 +11,9 @@ from app.utils.file_utils import get_file_path, save_uploaded_file
 from app.database import get_db
 from datetime import datetime
 from fastapi.responses import FileResponse, Response
+from fastapi import BackgroundTasks
+from app.routers.websocket import websocket_manager
+import asyncio
 import mimetypes
 
 import logging
@@ -146,6 +149,168 @@ async def upload_document(
         )
 
 
+@router.post("/upload-with-progress", response_model=List[DocumentResponse])
+async def upload_documents_with_progress(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...),
+    client_id: Optional[str] = Form(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload multiple documents with real-time progress updates via WebSocket.
+    """
+    uploaded_documents = []
+    
+    for file in files:
+        # Validate file size
+        if file.size and file.size > MAX_FILE_SIZE:
+            if client_id:
+                await websocket_manager.send_json(client_id, {
+                    "type": "document_error",
+                    "filename": file.filename,
+                    "error": f"File size exceeds {MAX_FILE_SIZE/(1024*1024)}MB"
+                })
+            continue
+        
+        # Validate file extension
+        if not DocumentProcessor.is_valid_file(file.filename):
+            if client_id:
+                await websocket_manager.send_json(client_id, {
+                    "type": "document_error",
+                    "filename": file.filename,
+                    "error": "File type not supported"
+                })
+            continue
+        
+        try:
+            # Save file and generate metadata
+            file_id, file_path = save_uploaded_file(file)
+            document_id = f"{file_id}_{file.filename}"
+            metadata = {
+                'original_filename': file.filename,
+                'file_size': file.size,
+                'upload_timestamp': datetime.utcnow().isoformat(),
+                'file_hash': file_id
+            }
+            
+            # Create DB entry first (with status='processing')
+            document = DocumentDB(
+                id=file_id,
+                filename=file.filename,
+                file_path=str(file_path),
+                file_type=os.path.splitext(file.filename)[1].lower(),
+                status="processing",
+                document_id=document_id,
+                char_count=0,
+                chunks_created=0
+            )
+            db.add(document)
+            db.commit()
+            db.refresh(document)
+            
+            # Send initial progress
+            if client_id:
+                await websocket_manager.send_json(client_id, {
+                    "type": "document_progress",
+                    "document_id": file_id,  # Use file_id for frontend tracking
+                    "filename": file.filename,
+                    "stage": "starting",
+                    "progress": 0,
+                    "details": "Document saved, starting processing..."
+                })
+            
+            # Process document asynchronously with progress
+            background_tasks.add_task(
+                process_document_async,
+                file_path=str(file_path),
+                document_id=document_id,
+                file_id=file_id,
+                metadata=metadata,
+                client_id=client_id,
+                db_document_id=document.id
+            )
+            
+            uploaded_documents.append(document)
+            
+        except Exception as e:
+            logger.error(f"Error uploading {file.filename}: {e}")
+            if client_id:
+                await websocket_manager.send_json(client_id, {
+                    "type": "document_error",
+                    "filename": file.filename,
+                    "error": str(e)
+                })
+    
+    return uploaded_documents
+
+
+async def process_document_async(
+    file_path: str,
+    document_id: str,
+    file_id: str,
+    metadata: dict,
+    client_id: Optional[str],
+    db_document_id: str
+):
+    """
+    Process document asynchronously with progress updates.
+    """
+    try:
+        # Pass websocket_manager as parameter
+        result = await rag_service.process_and_store_document_with_progress(
+            file_path=file_path,
+            document_id=document_id,
+            metadata=metadata,
+            client_id=client_id,
+            websocket_manager=websocket_manager  # Pass it here
+        )
+        
+        # Update database with results
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            document = db.query(DocumentDB).filter(DocumentDB.id == db_document_id).first()
+            if document and result['success']:
+                document.status = "processed"
+                document.char_count = result.get('char_count', 0)
+                document.chunks_created = result.get('chunks_created', 0)
+                document.processed_path = str(Path(file_path).parent.parent / "processed" / f"{file_id}.txt")
+                db.commit()
+                
+                # Send completion
+                if client_id:
+                    await websocket_manager.send_json(client_id, {
+                        "type": "document_progress",
+                        "document_id": file_id,
+                        "stage": "complete",
+                        "progress": 100,
+                        "details": f"Successfully processed: {result['chunks_created']} chunks created"
+                    })
+            elif not result['success']:
+                document.status = "error"
+                db.commit()
+                
+                if client_id:
+                    await websocket_manager.send_json(client_id, {
+                        "type": "document_progress",
+                        "document_id": file_id,
+                        "stage": "error",
+                        "progress": 0,
+                        "details": result.get('error', 'Processing failed')
+                    })
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Error in async processing: {e}")
+        if client_id:
+            await websocket_manager.send_json(client_id, {
+                "type": "document_progress",
+                "document_id": file_id,
+                "stage": "error",
+                "progress": 0,
+                "details": str(e)
+            })
 
 @router.get("/", response_model=DocumentList)
 async def list_documents(
@@ -410,4 +575,5 @@ async def get_document_content(
             "document_id": document_id,
             "filename": document.filename
         }
+
 

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import toast from 'react-hot-toast';
-
+import websocketService from './websocket';
 // Create axios instance with base configuration
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api/v1` : '/api/v1',
@@ -77,10 +77,13 @@ export const documentAPI = {
   uploadDocuments: async (files, onProgress) => {
     const formData = new FormData();
     files.forEach((file) => {
-      formData.append('file', file);
+      formData.append('files', file);  // Changed from 'file' to 'files'
     });
+    
+    // Add WebSocket client ID to the request
+    formData.append('client_id', websocketService.getClientId());
 
-    const response = await api.post('/documents/upload', formData, {
+    const response = await api.post('/documents/upload-with-progress', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -153,19 +156,19 @@ export const queryAPI = {
 
     // Ask question with conversation context
   askQuestionWithContext: async (question, conversationContext = [], documentIds = [], options = {}) => {
-    const response = await api.post('/query/ask-with-context', {
-      question,
-      document_ids: documentIds,
-      top_k: options.top_k || 5,
-      score_threshold: options.score_threshold || 0.3,
-      max_tokens: options.max_tokens || 512,
-      temperature: options.temperature || 0.3,
-    }, {
-      data: {
-        conversation_context: conversationContext
-      }
-    });
-
+    const requestBody = {
+      request: {  // Wrap query params in "request" field
+        question,
+        document_ids: documentIds,
+        top_k: options.top_k || 5,
+        score_threshold: options.score_threshold || 0.3,
+        max_tokens: options.max_tokens || 512,
+        temperature: options.temperature || 0.3,
+      },
+      conversation_context: conversationContext  // At root level
+    };
+    
+    const response = await api.post('/query/ask-with-context', requestBody);
     return response.data;
   },
 
