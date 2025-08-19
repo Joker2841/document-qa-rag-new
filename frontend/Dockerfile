@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production
+RUN npm ci
 
 # Copy source code
 COPY . .
@@ -17,20 +17,21 @@ COPY . .
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine AS production
+FROM nginx:alpine
 
-# Copy custom nginx config
-COPY nginx.conf /etc/nginx/nginx.conf
+# Install 'gettext' which provides the 'envsubst' utility for variable substitution
+RUN apk add --no-cache gettext
 
-# Copy built assets from builder stage
+# Copy custom nginx config as a template that can be modified on startup
+COPY nginx.conf /etc/nginx/nginx.conf.template
+
+# Copy built assets from the builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
-
-# Add healthcheck
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost/ || exit 1
 
 # Expose port
 EXPOSE 80
 
-# Start nginx
-CMD ["nginx", "-g", "daemon off;"]
+# This is the key change:
+# On container start, use 'envsubst' to replace variables in the template,
+# create the final nginx.conf, and then start the Nginx server.
+CMD ["/bin/sh", "-c", "envsubst < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"]
