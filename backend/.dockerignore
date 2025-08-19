@@ -1,0 +1,49 @@
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+Dockerfile.prod
+
+# Python virtual environments
+venv/
+faiss_env/
+.env
+.*env
+
+# Python caches and artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+
+# AI Model Caches and local data
+# These are the most important to ignore
+.cache/
+models/
+data/
+vector_store/
+uploads/
+
+# IDE and OS specific files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test and local script files
+tests/
+test_*.py
+*.log
+*.db
+*.tmp
+*.json
+*.toml
+*.md
+init_db.py
+manual_setup.py
+run.py
+startup.py

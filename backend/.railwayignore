@@ -1,0 +1,25 @@
+# Python virtual environments
+venv/
+faiss_env/
+.env
+.*env
+
+# Python caches
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# AI Model Caches and Data
+.cache/
+models/
+vector_store/
+uploads/
+
+# IDE and OS specific files
+.vscode/
+.idea/
+.DS_Store
+
+# Test and coverage reports
+.coverage
+htmlcov/
