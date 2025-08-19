@@ -40,8 +40,8 @@ USE_GPU = False if IS_PRODUCTION else (os.getenv("USE_GPU", "true").lower() == "
 DEVICE = "cuda" if USE_GPU and not IS_PRODUCTION else "cpu"
 
 # Model - use smaller in production
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2" if IS_PRODUCTION else "intfloat/e5-large-v2"
-
+#EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2" if IS_PRODUCTION else "intfloat/e5-large-v2"
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 # API
 API_PREFIX = "/api/v1"
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
