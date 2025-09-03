@@ -19,19 +19,17 @@ RUN npm run build
 # Production stage
 FROM nginx:alpine
 
-# Install 'gettext' which provides the 'envsubst' utility for variable substitution
+# Install envsubst for variable substitution
 RUN apk add --no-cache gettext
 
-# Copy custom nginx config as a template that can be modified on startup
+# Copy nginx config template
 COPY nginx.conf /etc/nginx/nginx.conf.template
 
-# Copy built assets from the builder stage
+# Copy built assets from builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 # Expose port
 EXPOSE 80
 
-# This is the key change:
-# On container start, use 'envsubst' to replace variables in the template,
-# create the final nginx.conf, and then start the Nginx server.
-CMD ["/bin/sh", "-c", "envsubst < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"]
+# Start nginx with environment variable substitution
+CMD ["/bin/sh", "-c", "envsubst '${BACKEND_URL}' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"]
